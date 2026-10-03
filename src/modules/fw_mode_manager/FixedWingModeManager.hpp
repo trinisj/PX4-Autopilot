@@ -302,6 +302,7 @@ private:
 	float _fw_entry_speed{0.0f};          ///< ground speed at handoff [m/s]
 	float _fw_entry_pitch_cmd{0.0f};      ///< current ramp pitch command [rad]
 	float _fw_entry_sink_corr{0.0f};      ///< sink-rate feedback pitch correction, >= 0 [rad]
+	float _fw_entry_corr_at_settle{0.0f}; ///< sink correction at the end of RAMP; only the change after it is applied in BLEND [rad]
 	float _fw_entry_pitch_out{NAN};       ///< published pitch_direct (NAN = bridge inactive) [rad]
 	float _fw_entry_thr_out{NAN};         ///< published throttle_direct (NAN = bridge inactive)
 	uORB::Subscription _tecs_status_sub{ORB_ID(tecs_status)};
@@ -673,6 +674,7 @@ private:
 	 * @param ground_speed Local 2D ground speed of vehicle [m/s]
 	 */
 	void fw_entry_bridge_update(const hrt_abstime now);
+	void fw_entry_update_sink_corr(const float vz, const float dt);
 	void control_manual_altitude(const float control_interval, const Vector2d &curr_pos, const Vector2f &ground_speed);
 
 	/**

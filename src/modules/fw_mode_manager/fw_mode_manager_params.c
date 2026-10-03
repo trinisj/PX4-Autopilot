@@ -671,7 +671,10 @@ PARAM_DEFINE_FLOAT(FW_ENT_TIMEOUT, 8.0f);
  * FW entry bridge: blend time into TECS
  *
  * Duration of the cross-fade from the bridge command to TECS pitch and
- * throttle. Altitude hold only starts after this blend.
+ * throttle. Altitude hold only starts after this blend. TECS's pitch
+ * integrator starts at zero after the handoff and needs several seconds to
+ * find the trim pitch, so this must not be too short. The sink-rate feedback
+ * stays active during the blend.
  *
  * @unit s
  * @min 0
@@ -680,7 +683,7 @@ PARAM_DEFINE_FLOAT(FW_ENT_TIMEOUT, 8.0f);
  * @increment 0.5
  * @group FW Mode Manager
  */
-PARAM_DEFINE_FLOAT(FW_ENT_BLEND, 2.0f);
+PARAM_DEFINE_FLOAT(FW_ENT_BLEND, 6.0f);
 
 /**
  * FW entry bridge: sink-rate feedback gain

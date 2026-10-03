@@ -191,7 +191,7 @@ private:
 		(ParamFloat<px4::params::MPC_YAWRAUTO_MAX>) _param_mpc_yawrauto_max,
 		(ParamFloat<px4::params::MPC_YAWRAUTO_ACC>) _param_mpc_yawrauto_acc,
 
-	// 261003
+		/* [2026-09 trinidrone] tailsitter in MC mode, see PositionControl::setAeroAngleLimit() */
 		(ParamFloat<px4::params::MPC_TS_AOA_K>)     _param_mpc_ts_aoa_k,
 		(ParamFloat<px4::params::MPC_TS_BRK_SPD>)   _param_mpc_ts_brk_spd,
 		(ParamFloat<px4::params::MPC_TS_THR_FLR>)   _param_mpc_ts_thr_flr,
@@ -199,8 +199,6 @@ private:
 		(ParamFloat<px4::params::MPC_TS_THR_BRK>)   _param_mpc_ts_thr_brk,
 		(ParamFloat<px4::params::MPC_TS_BRK_AOA>)   _param_mpc_ts_brk_aoa,
 		(ParamFloat<px4::params::MPC_TS_THR_BRK2>)  _param_mpc_ts_thr_brk2
-	/****************************************************************************/
-
 	);
 
 	math::WelfordMean<float> _sample_interval_s{};

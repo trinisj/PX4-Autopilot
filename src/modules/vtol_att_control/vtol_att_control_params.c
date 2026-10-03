@@ -135,6 +135,10 @@ PARAM_DEFINE_FLOAT(VT_ARSP_BLEND, 8.0f);
  *
  * Airspeed at which we can switch to fw mode
  *
+ * [2026-09 custom] Max raised from 30 to 100 m/s: this airframe needs
+ * well over 30 m/s before its fins carry the weight. For tailsitters,
+ * groundspeed is used against this value when no airspeed is available.
+ *
  * @unit m/s
  * @min 0.00
  * @max 100.00
@@ -285,7 +289,6 @@ PARAM_DEFINE_INT32(VT_FW_QC_HMAX, 0);
  */
 PARAM_DEFINE_FLOAT(VT_F_TR_OL_TM, 6.0f);
 
-// 261003
 /**
  * Front transition maximum tolerated sink rate before holding tilt progress
  *
@@ -386,7 +389,6 @@ PARAM_DEFINE_FLOAT(VT_B_TR_SPD_GATE, 60.0f);
  * @group VTOL Attitude Control
  */
 PARAM_DEFINE_FLOAT(VT_F_TR_LIFT_MIN, 0.7f);
-/***********************************************************************/
 
 /**
  * Differential thrust in forwards flight.

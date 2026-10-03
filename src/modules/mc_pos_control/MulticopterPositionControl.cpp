@@ -199,15 +199,13 @@ void MulticopterPositionControl::parameters_update(bool force)
 			Vector3f(_param_mpc_xy_vel_i_acc.get(), _param_mpc_xy_vel_i_acc.get(), _param_mpc_z_vel_i_acc.get()),
 			Vector3f(_param_mpc_xy_vel_d_acc.get(), _param_mpc_xy_vel_d_acc.get(), _param_mpc_z_vel_d_acc.get()));
 		_control.setHorizontalThrustMargin(_param_mpc_thr_xy_marg.get());
-
-	// 261003
+		// [2026-09 trinidrone] tailsitter in MC mode at speed
 		_control.setAeroAngleLimit(_param_mpc_ts_aoa_k.get());
 		_control.setAeroBrakeSpeed(_param_mpc_ts_brk_spd.get());
 		_control.setAeroThrustFloor(_param_mpc_ts_thr_flr.get());
 		_control.setSpeedModeOn(_param_mpc_ts_spd_on.get());
 		_control.setZoomBrake(_param_mpc_ts_thr_brk.get(), _param_mpc_ts_brk_aoa.get());
 		_control.setZoomBrakeThrustLow(_param_mpc_ts_thr_brk2.get());
-	/*********************************************************************************/
 		_control.decoupleHorizontalAndVecticalAcceleration(_param_mpc_acc_decouple.get());
 		_goto_control.setParamMpcAccHor(_param_mpc_acc_hor.get());
 		_goto_control.setParamMpcAccDownMax(_param_mpc_acc_down_max.get());

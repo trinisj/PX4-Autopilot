@@ -77,6 +77,7 @@
 #include <uORB/topics/position_controller_landing_status.h>
 #include <uORB/topics/position_controller_status.h>
 #include <uORB/topics/position_setpoint_triplet.h>
+#include <uORB/topics/tecs_status.h>
 #include <uORB/topics/trajectory_setpoint.h>
 #include <uORB/topics/vehicle_angular_velocity.h>
 #include <uORB/topics/vehicle_attitude.h>
@@ -112,7 +113,10 @@ static constexpr float HDG_HOLD_YAWRATE_THRESH = 0.15f;
 // [.] max manual roll/yaw normalized input from user which does not change the locked heading
 static constexpr float HDG_HOLD_MAN_INPUT_THRESH = 0.01f;
 
-static constexpr float HDG_HOLD_MIN_GROUNDSPEED_FOR_COURSE = 5.0f;	//261003
+// [m/s] [2026-09 custom] above this ground speed, heading hold latches the ground course
+// (velocity direction) instead of the attitude yaw. For a tailsitter the attitude yaw is
+// ill-defined while the nose is near vertical (gimbal lock of the FW-frame Euler angles).
+static constexpr float HDG_HOLD_MIN_GROUNDSPEED_FOR_COURSE = 5.0f;
 
 // [us] time after which we abort landing if terrain estimate is not valid. this timer start whenever the terrain altitude
 // was previously valid, and has changed to invalid.
@@ -153,7 +157,26 @@ static constexpr float POST_TOUCHDOWN_CLAMP_TIME = 0.5f;
 // [] Stick deadzon
 static constexpr float kStickDeadBand = 0.06f;
 
-static constexpr hrt_abstime FW_ENTRY_OPEN_LOOP_DURATION = 2_s;		//261003
+/* [2026-10 custom] FW-entry bridge (speed-paced pitch ramp).
+ *
+ * Right after a VTOL front transition hands off to FIXED_WING, TECS has just
+ * reset its integrators (TECS::update() dt > DT_MAX branch) and, on top of
+ * that, sees an under-speed condition (ground speed << FW_AIRSPD_TRIM), so it
+ * pitches DOWN to gain speed. This wingless tailsitter makes lift only from
+ * body angle of attack, so that pitch-down costs ~15-20 m of altitude
+ * (log_0_2026-10-3-15-31-50: pitch command 12.9 -> 1.2 deg in 0.3 s at 56 m/s,
+ * sink up to 5 m/s).
+ *
+ * Instead the pitch is ramped from the handoff pitch down to FW_ENT_PIT_END
+ * as ground speed rises from the handoff speed to FW_ENT_SPD_END (lift ~ AoA *
+ * V^2, so required AoA falls with speed), with NO altitude hold; height is
+ * only controlled by TECS after the bridge, blended in over FW_ENT_BLEND. */
+static constexpr float FW_ENTRY_MIN_BRIDGE_S = 1.0f;       ///< earliest the bridge may end [s]
+static constexpr float FW_ENTRY_PITCH_RATE_DEG_S = 5.0f;   ///< max |d(pitch cmd)/dt| [deg/s]
+static constexpr float FW_ENTRY_SINK_HOLD_MS = 1.5f;       ///< while sinking faster than this, never reduce pitch [m/s]
+static constexpr float FW_ENTRY_SINK_DONE_MS = 1.0f;       ///< bridge may only end below this sink rate [m/s]
+static constexpr float FW_ENTRY_PITCH_ERR_DONE_DEG = 5.0f; ///< bridge may only end when |pitch - cmd| below this [deg] (SITL shows ~4 deg tracking lag)
+static constexpr float FW_ENTRY_TECS_MAX_AGE_S = 0.5f;     ///< max age of tecs_status usable for the blend [s]
 
 class FixedWingModeManager final : public ModuleBase<FixedWingModeManager>, public ModuleParams,
 	public px4::WorkItem
@@ -255,12 +278,24 @@ private:
 	float _current_altitude{0.f};
 
 	float _yaw{0.0f};
+	float _pitch{0.0f}; ///< [2026-09 custom] FW-frame pitch (see vehicle_attitude_poll()); used to seed the FW-entry bridge below
 
-	float _pitch{0.0f};			// 261003
-	bool _was_in_transition_to_fw{false};	// 261003
-	hrt_abstime _fw_entry_ts{0};		// 261003
-	float _fw_entry_pitch_hold{0.0f};	// 261003
-
+	/* [2026-10 custom] FW-entry bridge state, see fw_entry_bridge_update().
+	 * Phase RAMP: pitch_direct/throttle_direct follow a speed-paced ramp.
+	 * Phase BLEND: command is cross-faded to TECS's own pitch/throttle.
+	 * TECS keeps running underneath (FwLateralLongitudinalControl) the whole time. */
+	enum class FwEntryPhase : uint8_t { NONE, RAMP, BLEND };
+	FwEntryPhase _fw_entry_phase{FwEntryPhase::NONE};
+	bool _was_in_transition_to_fw{false};
+	hrt_abstime _fw_entry_ts{0};          ///< handoff time
+	hrt_abstime _fw_entry_last_ts{0};     ///< last ramp update time
+	hrt_abstime _fw_entry_blend_ts{0};    ///< blend start time
+	float _fw_entry_pitch_hold{0.0f};     ///< FW-frame pitch at handoff [rad]
+	float _fw_entry_speed{0.0f};          ///< ground speed at handoff [m/s]
+	float _fw_entry_pitch_cmd{0.0f};      ///< current ramp pitch command [rad]
+	float _fw_entry_pitch_out{NAN};       ///< published pitch_direct (NAN = bridge inactive) [rad]
+	float _fw_entry_thr_out{NAN};         ///< published throttle_direct (NAN = bridge inactive)
+	uORB::Subscription _tecs_status_sub{ORB_ID(tecs_status)};
 	float _yawrate{0.0f};
 
 	float _body_acceleration_x{0.f};
@@ -628,6 +663,7 @@ private:
 	 * @param curr_pos Current 2D local position vector of vehicle [m]
 	 * @param ground_speed Local 2D ground speed of vehicle [m/s]
 	 */
+	void fw_entry_bridge_update(const hrt_abstime now);
 	void control_manual_altitude(const float control_interval, const Vector2d &curr_pos, const Vector2f &ground_speed);
 
 	/**
@@ -859,7 +895,12 @@ private:
 		(ParamFloat<px4::params::FW_T_SINK_R_SP>) _param_sinkrate_target,
 		(ParamFloat<px4::params::FW_THR_IDLE>) _param_fw_thr_idle,
 		(ParamFloat<px4::params::FW_THR_MAX>) _param_fw_thr_max,
-		(ParamFloat<px4::params::FW_THR_TRIM>) _param_fw_thr_trim,		// 261003
+		/* [2026-10 custom] throttle held during the FW-entry bridge ramp, see fw_entry_bridge_update() */
+		(ParamFloat<px4::params::FW_THR_TRIM>) _param_fw_thr_trim,
+		(ParamFloat<px4::params::FW_ENT_PIT_END>) _param_fw_ent_pit_end,
+		(ParamFloat<px4::params::FW_ENT_SPD_END>) _param_fw_ent_spd_end,
+		(ParamFloat<px4::params::FW_ENT_TIMEOUT>) _param_fw_ent_timeout,
+		(ParamFloat<px4::params::FW_ENT_BLEND>) _param_fw_ent_blend,
 		(ParamFloat<px4::params::FW_THR_MIN>) _param_fw_thr_min,
 		(ParamFloat<px4::params::FW_FLAPS_LND_SCL>) _param_fw_flaps_lnd_scl,
 		(ParamFloat<px4::params::FW_FLAPS_TO_SCL>) _param_fw_flaps_to_scl,

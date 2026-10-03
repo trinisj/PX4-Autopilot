@@ -103,8 +103,8 @@ void PositionControl::setInputSetpoint(const trajectory_setpoint_s &setpoint)
 	_acc_sp = Vector3f(setpoint.acceleration);
 	_yaw_sp = setpoint.yaw;
 	_yawspeed_sp = setpoint.yawspeed;
-	_vel_xy_controlled = PX4_ISFINITE(setpoint.velocity[0]) || PX4_ISFINITE(setpoint.position[0]);		// 261003
-
+	// [2026-09 trinidrone] Position mode (velocity/position controlled) vs Altitude mode (acceleration only)
+	_vel_xy_controlled = PX4_ISFINITE(setpoint.velocity[0]) || PX4_ISFINITE(setpoint.position[0]);
 }
 
 bool PositionControl::update(const float dt)
@@ -158,34 +158,6 @@ void PositionControl::_velocityControl(const float dt)
 	    (_thr_sp(2) <= -_lim_thr_max && vel_error(2) <= 0.f)) {
 		vel_error(2) = 0.f;
 	}
-
-// 261003
-/*
-	// Prioritize vertical control while keeping a horizontal margin
-	const Vector2f thrust_sp_xy(_thr_sp);
-	const float thrust_sp_xy_norm = thrust_sp_xy.norm();
-	const float thrust_max_squared = math::sq(_lim_thr_max);
-
-	// Determine how much vertical thrust is left keeping horizontal margin
-	const float allocated_horizontal_thrust = math::min(thrust_sp_xy_norm, _lim_thr_xy_margin);
-	const float thrust_z_max_squared = thrust_max_squared - math::sq(allocated_horizontal_thrust);
-
-	// Saturate maximal vertical thrust
-	_thr_sp(2) = math::max(_thr_sp(2), -sqrtf(thrust_z_max_squared));
-
-	// Determine how much horizontal thrust is left after prioritizing vertical control
-	const float thrust_max_xy_squared = thrust_max_squared - math::sq(_thr_sp(2));
-	float thrust_max_xy = 0.f;
-
-	if (thrust_max_xy_squared > 0.f) {
-		thrust_max_xy = sqrtf(thrust_max_xy_squared);
-	}
-
-	// Saturate thrust in horizontal direction
-	if (thrust_sp_xy_norm > thrust_max_xy) {
-		_thr_sp.xy() = thrust_sp_xy / thrust_sp_xy_norm * thrust_max_xy;
-	}
-*/
 
 	// [2026-09 trinidrone] collective held up by the aero thrust floor: do not wind down
 	if (_aero_floor_active && vel_error(2) >= 0.f) {
@@ -271,17 +243,13 @@ void PositionControl::_velocityControl(const float dt)
 		}
 	}
 
-/******************************************************************************/	
-
 	// Use tracking Anti-Windup for horizontal direction: during saturation, the integrator is used to unsaturate the output
 	// see Anti-Reset Windup for PID controllers, L.Rundqwist, 1990
 	const Vector2f acc_sp_xy_produced = Vector2f(_thr_sp) * (CONSTANTS_ONE_G / _hover_thrust);
 
 	// The produced acceleration can be greater or smaller than the desired acceleration due to the saturations and the actual vertical thrust (computed independently).
 	// The ARW loop needs to run if the signal is saturated only.
-
-	if (!speed_mode_xy && (_acc_sp.xy().norm_squared() > acc_sp_xy_produced.norm_squared())) {	// 261003
-//	if (_acc_sp.xy().norm_squared() > acc_sp_xy_produced.norm_squared()) {
+	if (!speed_mode_xy && (_acc_sp.xy().norm_squared() > acc_sp_xy_produced.norm_squared())) {
 		const float arw_gain = 2.f / _gain_vel_p(0);
 		const Vector2f acc_sp_xy = _acc_sp.xy();
 
@@ -305,15 +273,14 @@ void PositionControl::_accelerationControl()
 	}
 
 	Vector3f body_z = Vector3f(-_acc_sp(0), -_acc_sp(1), -z_specific_force).normalized();
-	_aero_limit_active = _limitAeroAngle(body_z);		// 261003
+	// [2026-09 trinidrone] aero angle limit first; the tilt limit below still
+	// has the last word (keeps the nose MPC_TILTMAX_AIR away from horizontal).
+	_aero_limit_active = _limitAeroAngle(body_z);
 	ControlMath::limitTilt(body_z, Vector3f(0, 0, 1), _lim_tilt);
 	// Convert to thrust assuming hover thrust produces standard gravity
 	const float thrust_ned_z = _acc_sp(2) * (_hover_thrust / CONSTANTS_ONE_G) - _hover_thrust;
 	// Project thrust to planned body attitude
 	const float cos_ned_body = (Vector3f(0, 0, 1).dot(body_z));
-
-// 261003
-//	const float collective_thrust = math::min(thrust_ned_z / cos_ned_body, -_lim_thr_min);
 	float collective_thrust = math::min(thrust_ned_z / cos_ned_body, -_lim_thr_min);
 
 	/* [2026-09 trinidrone] Collective floor at speed (MPC_TS_THR_FLR), independent
@@ -334,12 +301,10 @@ void PositionControl::_accelerationControl()
 
 	// [2026-09 trinidrone] speed mode: thrust from the horizontal demand, tilt from the vertical need
 	_speedModeBlend(body_z, collective_thrust, thrust_ned_z);
-/*********************************************************************************************/
 
 	_thr_sp = body_z * collective_thrust;
 }
 
-// 261003
 /* [2026-09 trinidrone] Speed mode for a tailsitter flown in MC mode at speed
  * (MPC_TS_SPD_ON > 0).
  *
@@ -649,7 +614,6 @@ void PositionControl::_zoomBrake(Vector3f &body_z, float &collective_thrust, con
 	_speed_mode_weight = weight;
 	_zoom_brake_active = true;
 }
-/************************************************************************************/
 
 bool PositionControl::_inputValid()
 {

@@ -177,7 +177,6 @@ public:
 	 */
 	void getLocalPositionSetpoint(vehicle_local_position_setpoint_s &local_position_setpoint) const;
 
-// 261003
 	/**
 	 * [2026-09 trinidrone] Aerodynamic angle limit (tailsitter flown in MC mode).
 	 * Limits the angle between the thrust axis (= nose) and the velocity
@@ -217,7 +216,6 @@ public:
 	float speedModeWeight() const { return _speed_mode_weight; }
 	bool aeroAngleLimitActive() const { return _aero_limit_active; }
 
-/***************************************************************/
 	/**
 	 * Get the controllers output attitude setpoint
 	 * This attitude setpoint was generated from the resulting acceleration setpoint after position and velocity control.
@@ -241,10 +239,9 @@ private:
 	void _positionControl(); ///< Position proportional control
 	void _velocityControl(const float dt); ///< Velocity PID control
 	void _accelerationControl(); ///< Acceleration setpoint processing
-	bool _limitAeroAngle(matrix::Vector3f &body_z) const; // 261003 see setAeroAngleLimit()
-	void _speedModeBlend(matrix::Vector3f &body_z, float &collective_thrust, float thrust_ned_z);	// 261003
-	void _zoomBrake(matrix::Vector3f &body_z, float &collective_thrust, float weight); 		// 261003
-
+	bool _limitAeroAngle(matrix::Vector3f &body_z) const; ///< [2026-09 trinidrone] see setAeroAngleLimit()
+	void _speedModeBlend(matrix::Vector3f &body_z, float &collective_thrust, float thrust_ned_z); ///< [2026-09 trinidrone]
+	void _zoomBrake(matrix::Vector3f &body_z, float &collective_thrust, float weight); ///< [2026-09 trinidrone]
 
 	// Gains
 	matrix::Vector3f _gain_pos_p; ///< Position control proportional gain
@@ -262,7 +259,6 @@ private:
 	float _lim_tilt{}; ///< Maximum tilt from level the output attitude is allowed to have
 
 	float _hover_thrust{}; ///< Thrust [HOVER_THRUST_MIN, HOVER_THRUST_MAX] with which the vehicle hovers not accelerating down or up with level orientation
-// 261003
 	float _aero_angle_k{0.f}; ///< [deg*(m/s)^2] see setAeroAngleLimit(), <= 0 disables
 	bool _aero_limit_active{false}; ///< aero angle limit changed the thrust direction this cycle
 	bool _aero_floor_active{false}; ///< collective was raised to _aero_thr_floor this cycle
@@ -293,7 +289,6 @@ private:
 	static constexpr float SPEED_MODE_ACC_FULL = 3.f * 9.80665f; ///< [m/s^2] demand = full thrust (= manual stick max, log_0_2026-9-28)
 	static constexpr float SPEED_MODE_ACC_MIN = 1.f; ///< [m/s^2] below this the demand counts as "centred"
 	static constexpr float SPEED_MODE_TILT_MIN = 0.7854f; ///< [rad] 45 deg: steepest nose allowed in speed mode
-/*******************************************************************************************/
 	bool _decouple_horizontal_and_vertical_acceleration{true}; ///< Ignore vertical acceleration setpoint to remove its effect on the tilt setpoint
 
 	// States

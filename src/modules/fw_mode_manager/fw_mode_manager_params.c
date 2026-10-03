@@ -621,3 +621,63 @@ PARAM_DEFINE_FLOAT(FW_FLAPS_LND_SCL, 1.0f);
  * @group FW Auto Landing
  */
 PARAM_DEFINE_FLOAT(FW_SPOILERS_LND, 0.f);
+
+/**
+ * FW entry bridge: final pitch
+ *
+ * After a VTOL front transition hands off to fixed-wing flight, the pitch
+ * command is ramped from the handoff pitch down to this value while ground
+ * speed rises to FW_ENT_SPD_END. Fixed-wing frame, positive nose up.
+ *
+ * @unit deg
+ * @min 0
+ * @max 30
+ * @decimal 1
+ * @increment 0.5
+ * @group FW Mode Manager
+ */
+PARAM_DEFINE_FLOAT(FW_ENT_PIT_END, 6.0f);
+
+/**
+ * FW entry bridge: ground speed at which the pitch ramp ends
+ *
+ * 0 = use 0.9 * FW_AIRSPD_TRIM.
+ *
+ * @unit m/s
+ * @min 0
+ * @max 150
+ * @decimal 1
+ * @increment 1
+ * @group FW Mode Manager
+ */
+PARAM_DEFINE_FLOAT(FW_ENT_SPD_END, 0.0f);
+
+/**
+ * FW entry bridge: maximum duration
+ *
+ * The bridge is left after this time even if its settle conditions
+ * (speed reached, sink rate and pitch error small) are not met.
+ *
+ * @unit s
+ * @min 1
+ * @max 30
+ * @decimal 1
+ * @increment 0.5
+ * @group FW Mode Manager
+ */
+PARAM_DEFINE_FLOAT(FW_ENT_TIMEOUT, 8.0f);
+
+/**
+ * FW entry bridge: blend time into TECS
+ *
+ * Duration of the cross-fade from the bridge command to TECS pitch and
+ * throttle. Altitude hold only starts after this blend.
+ *
+ * @unit s
+ * @min 0
+ * @max 10
+ * @decimal 1
+ * @increment 0.5
+ * @group FW Mode Manager
+ */
+PARAM_DEFINE_FLOAT(FW_ENT_BLEND, 2.0f);

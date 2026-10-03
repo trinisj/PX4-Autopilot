@@ -248,9 +248,8 @@ FixedWingModeManager::vehicle_attitude_poll()
 
 		const Eulerf euler_angles(R);
 		_yaw = euler_angles(2);
-		// 261003
-		_pitch = euler_angles(1);
-		/**************************************************************************/
+		_pitch = euler_angles(1); // [2026-09 custom] HANDOFF 8.2: FW-frame pitch, latched at FW entry below
+
 		const Vector3f body_acceleration = R.transpose() * Vector3f{_local_pos.ax, _local_pos.ay, _local_pos.az};
 		_body_acceleration_x = body_acceleration(0);
 
@@ -1758,6 +1757,93 @@ FixedWingModeManager::control_auto_landing_circular(const hrt_abstime &now, cons
 	publishOrbitStatus(pos_sp_curr);
 }
 
+/* [2026-10 custom] FW-entry bridge: speed-paced pitch ramp, then blend into TECS.
+ * Runs once per cycle; results are consumed by control_manual_altitude/position(). */
+void
+FixedWingModeManager::fw_entry_bridge_update(const hrt_abstime now)
+{
+	_fw_entry_pitch_out = NAN;
+	_fw_entry_thr_out = NAN;
+
+	if (_fw_entry_phase == FwEntryPhase::NONE) {
+		return;
+	}
+
+	// leave the bridge if the vehicle is no longer in plain fixed-wing flight (back transition, quad-chute, ...)
+	if (_vehicle_status.vehicle_type != vehicle_status_s::VEHICLE_TYPE_FIXED_WING || _vehicle_status.in_transition_mode) {
+		_fw_entry_phase = FwEntryPhase::NONE;
+		return;
+	}
+
+	const float elapsed = hrt_elapsed_time(&_fw_entry_ts) * 1e-6f;
+	const float vz = (_local_pos.v_z_valid && PX4_ISFINITE(_local_pos.vz)) ? _local_pos.vz : 0.f; // NED, + = sinking
+	const float gs = Vector2f(_local_pos.vx, _local_pos.vy).norm();
+	const float thr_trim = _param_fw_thr_trim.get();
+
+	if (_fw_entry_phase == FwEntryPhase::RAMP) {
+		const float dt = math::constrain((now - _fw_entry_last_ts) * 1e-6f, 0.f, 0.1f);
+		_fw_entry_last_ts = now;
+
+		const float pitch_end = radians(_param_fw_ent_pit_end.get());
+		const float v_end = (_param_fw_ent_spd_end.get() > 0.f) ? _param_fw_ent_spd_end.get()
+				    : 0.9f * _param_fw_airspd_trim.get();
+		const float span = v_end - _fw_entry_speed;
+		const float s = (span > 1.f) ? math::constrain((gs - _fw_entry_speed) / span, 0.f, 1.f)
+				: (gs >= v_end ? 1.f : 0.f);
+
+		float target = _fw_entry_pitch_hold + (pitch_end - _fw_entry_pitch_hold) * s;
+
+		const bool sinking_hold = vz > FW_ENTRY_SINK_HOLD_MS;
+
+		if (sinking_hold && target < _fw_entry_pitch_cmd) {
+			target = _fw_entry_pitch_cmd; // sinking: do not take away more angle of attack
+		}
+
+		const float max_step = radians(FW_ENTRY_PITCH_RATE_DEG_S) * dt;
+		_fw_entry_pitch_cmd += math::constrain(target - _fw_entry_pitch_cmd, -max_step, max_step);
+
+		_fw_entry_pitch_out = _fw_entry_pitch_cmd;
+		_fw_entry_thr_out = thr_trim;
+
+		const bool settled = (elapsed >= FW_ENTRY_MIN_BRIDGE_S) && (s >= 1.f) && (vz < FW_ENTRY_SINK_DONE_MS)
+				     && (fabsf(_pitch - _fw_entry_pitch_cmd) < radians(FW_ENTRY_PITCH_ERR_DONE_DEG));
+		const bool timed_out = elapsed >= _param_fw_ent_timeout.get();
+
+		if (settled || timed_out) {
+			_fw_entry_phase = FwEntryPhase::BLEND;
+			_fw_entry_blend_ts = now;
+			PX4_INFO("FW entry bridge %s: t %.1f s, gs %.1f m/s, sink %.2f m/s, pitch %.1f deg (cmd %.1f)",
+				 settled ? "settled" : "TIMEOUT", (double)elapsed, (double)gs, (double)vz,
+				 (double)math::degrees(_pitch), (double)math::degrees(_fw_entry_pitch_cmd));
+		}
+
+		return;
+	}
+
+	// BLEND: cross-fade from the last ramp command to TECS's own output
+	tecs_status_s tecs{};
+	const bool tecs_ok = _tecs_status_sub.copy(&tecs)
+			     && (hrt_elapsed_time(&tecs.timestamp) * 1e-6f < FW_ENTRY_TECS_MAX_AGE_S)
+			     && PX4_ISFINITE(tecs.pitch_sp_rad) && PX4_ISFINITE(tecs.throttle_sp);
+
+	const float blend_t = math::max(_param_fw_ent_blend.get(), 0.01f);
+	const float w = math::constrain(hrt_elapsed_time(&_fw_entry_blend_ts) * 1e-6f / blend_t, 0.f, 1.f);
+
+	if (!tecs_ok || w >= 1.f) {
+		_fw_entry_phase = FwEntryPhase::NONE;
+		return;
+	}
+
+	float pitch = (1.f - w) * _fw_entry_pitch_cmd + w * tecs.pitch_sp_rad;
+
+	if (vz > FW_ENTRY_SINK_HOLD_MS && pitch < _fw_entry_pitch_cmd) {
+		pitch = _fw_entry_pitch_cmd; // still sinking: keep the angle of attack until TECS has caught up
+	}
+
+	_fw_entry_pitch_out = pitch;
+	_fw_entry_thr_out = (1.f - w) * thr_trim + w * tecs.throttle_sp;
+}
+
 void
 FixedWingModeManager::control_manual_altitude(const float control_interval, const Vector2d &curr_pos,
 		const Vector2f &ground_speed)
@@ -1778,23 +1864,14 @@ FixedWingModeManager::control_manual_altitude(const float control_interval, cons
 		throttle_max = 0.0f;
 	}
 
-	// 261003
-	const bool fw_entry_bridge = hrt_elapsed_time(&_fw_entry_ts) < FW_ENTRY_OPEN_LOOP_DURATION;
-	/**************************************************************************/
-
+	/* [2026-10 custom] FW-entry bridge output, see fw_entry_bridge_update(). */
 	const fixed_wing_longitudinal_setpoint_s fw_longitudinal_control_sp = {
 		.timestamp = hrt_absolute_time(),
 		.altitude = NAN,
 		.height_rate = height_rate_sp,
 		.equivalent_airspeed = get_manual_airspeed_setpoint(),
-
-	//	.pitch_direct = NAN,
-	//	.throttle_direct = NAN
-	// 261003
-		.pitch_direct = fw_entry_bridge ? _fw_entry_pitch_hold : NAN,
-		.throttle_direct = fw_entry_bridge ? _param_fw_thr_trim.get() : NAN
-	/**************************************************************************/
-
+		.pitch_direct = _fw_entry_pitch_out,
+		.throttle_direct = _fw_entry_thr_out
 	};
 
 	_longitudinal_ctrl_sp_pub.publish(fw_longitudinal_control_sp);
@@ -1855,12 +1932,19 @@ FixedWingModeManager::control_manual_position(const hrt_abstime now, const float
 			_yaw_lock_engaged = true;
 		}
 
-		// 261003
+		/* [2026-09 custom] During a VTOL transition this function already runs,
+		 * so stock latched the heading at the very start of the front transition -
+		 * for a tailsitter that is while hovering nose-up, where _yaw (FW-frame
+		 * Euler yaw of R * R_offset) is gimbal-locked garbage. Observed in
+		 * log_0_2026-9-27-17-16-12.ulg: latched -74 deg while flying +90 deg,
+		 * leaving a saturated +50 deg roll command that took effect at FW
+		 * handover. Re-latch every cycle while in transition, so the hold
+		 * follows the current course and is locked for real on the first
+		 * fixed-wing cycle, at speed. */
 		if (_vehicle_status.is_vtol && _vehicle_status.in_transition_mode) {
 			_hdg_hold_enabled = false;
 			_yaw_lock_engaged = true;
 		}
-		/**************************************************************************/
 
 		if (_yaw_lock_engaged) {
 
@@ -1870,17 +1954,15 @@ FixedWingModeManager::control_manual_position(const hrt_abstime now, const float
 				// just switched back from non heading-hold to heading hold
 				_hdg_hold_enabled = true;
 
-
-			//	_hdg_hold_yaw = _yaw;
-			// 261003
+				/* [2026-09 custom] latch the ground course when moving - that is what
+				 * the line below is supposed to follow, and it is well defined for a
+				 * tailsitter at any nose attitude. Fall back to attitude yaw when slow. */
 				if (ground_speed.norm() > HDG_HOLD_MIN_GROUNDSPEED_FOR_COURSE) {
 					_hdg_hold_yaw = atan2f(ground_speed(1), ground_speed(0));
 
 				} else {
 					_hdg_hold_yaw = _yaw;
 				}
-			/**************************************************************************/
-
 
 				_hdg_hold_position = curr_pos_local;
 			}
@@ -1902,22 +1984,14 @@ FixedWingModeManager::control_manual_position(const hrt_abstime now, const float
 		}
 	}
 
-	// 261003
-	const bool fw_entry_bridge = hrt_elapsed_time(&_fw_entry_ts) < FW_ENTRY_OPEN_LOOP_DURATION;
-	/**************************************************************************/
-
+	/* [2026-10 custom] FW-entry bridge output, see fw_entry_bridge_update(). */
 	const fixed_wing_longitudinal_setpoint_s fw_longitudinal_control_sp = {
 		.timestamp = hrt_absolute_time(),
 		.altitude = NAN,
 		.height_rate = height_rate_sp,
 		.equivalent_airspeed = get_manual_airspeed_setpoint(),
-	//	.pitch_direct = NAN,
-	//	.throttle_direct = NAN
-	// 261003
-		.pitch_direct = fw_entry_bridge ? _fw_entry_pitch_hold : NAN,
-		.throttle_direct = fw_entry_bridge ? _param_fw_thr_trim.get() : NAN
-	/**************************************************************************/
-
+		.pitch_direct = _fw_entry_pitch_out,
+		.throttle_direct = _fw_entry_thr_out
 	};
 
 	_longitudinal_ctrl_sp_pub.publish(fw_longitudinal_control_sp);
@@ -2163,18 +2237,24 @@ FixedWingModeManager::Run()
 			_backtrans_heading = NAN;
 		}
 
-		// 261003
+		/* [2026-10 custom] detect the front-transition -> FIXED_WING handoff edge and
+		 * latch pitch / ground speed at that instant to start the entry ramp. */
 		const bool just_entered_fw_from_transition = _was_in_transition_to_fw
 				&& !_vehicle_status.in_transition_to_fw
 				&& (_vehicle_status.vehicle_type == vehicle_status_s::VEHICLE_TYPE_FIXED_WING);
 
 		if (just_entered_fw_from_transition) {
+			_fw_entry_phase = FwEntryPhase::RAMP;
 			_fw_entry_ts = now;
+			_fw_entry_last_ts = now;
 			_fw_entry_pitch_hold = _pitch;
+			_fw_entry_pitch_cmd = _pitch;
+			_fw_entry_speed = Vector2f(_local_pos.vx, _local_pos.vy).norm();
 		}
 
+		fw_entry_bridge_update(now);
+
 		_was_in_transition_to_fw = _vehicle_status.in_transition_to_fw;
-		/**************************************************************************/
 
 
 		Vector2d curr_pos(_current_latitude, _current_longitude);

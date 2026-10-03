@@ -711,7 +711,7 @@ void FwLateralLongitudinalControl::updateTECSAltitudeTimeConstant(const bool is_
 	_tecs_alt_time_const_slew_rate.update(alt_tracking_tc, dt);
 }
 
-float FwLateralLongitudinalControl::getGuidanceQualityFactor(const vehicle_local_position_s &local_pos, const bool is_wind_valid) const
+float FwLateralLongitudinalControl::getGuidanceQualityFactor(const vehicle_local_position_s &local_pos, const float heading, const bool is_wind_valid) const
 {
 	if (is_wind_valid) {
 		// If we have a valid wind estimate, npfg is able to handle all degenerated cases
@@ -727,7 +727,7 @@ float FwLateralLongitudinalControl::getGuidanceQualityFactor(const vehicle_local
 							    0.f, 1.f));
 
 	// Check that the angle between heading and track is not off too much. if it is greater than 90° we will be pushed back from the wind and the npfg will propably give a roll command in the wrong direction.
-	const Vector2f heading_vector(matrix::Dcm2f(local_pos.heading)*Vector2f({1.f, 0.f}));
+	const Vector2f heading_vector(matrix::Dcm2f(heading)*Vector2f({1.f, 0.f}));
 	const Vector2f ground_vel_norm(ground_vel.normalized());
 	const float flying_forward_factor(math::constrain((heading_vector.dot(ground_vel_norm) -
 							   COS_HEADING_TRACK_ANGLE_PUSHED_BACK) / ((COS_HEADING_TRACK_ANGLE_NOT_PUSHED_BACK -
@@ -739,7 +739,7 @@ float FwLateralLongitudinalControl::getGuidanceQualityFactor(const vehicle_local
 float FwLateralLongitudinalControl::getCorrectedLateralAccelSetpoint(float lateral_accel_sp)
 {
 	// Scale the npfg output to zero if npfg is not certain for correct output
-	_can_run_factor = math::constrain(getGuidanceQualityFactor(_local_pos, _wind_valid), 0.f, 1.f);
+	_can_run_factor = math::constrain(getGuidanceQualityFactor(_local_pos, _yaw, _wind_valid), 0.f, 1.f);
 
 	hrt_abstime now{hrt_absolute_time()};
 

@@ -238,7 +238,9 @@ private:
 
 	bool checkLowHeightConditions() const;
 
-	float getGuidanceQualityFactor(const vehicle_local_position_s &local_pos, const bool is_wind_valid) const;
+	// [2026-10 custom] heading is the FW-frame yaw (_yaw), NOT local_pos.heading: for a tailsitter the latter is the
+	// MC-frame yaw of the EKF quaternion, which follows the bank angle in fixed-wing flight.
+	float getGuidanceQualityFactor(const vehicle_local_position_s &local_pos, const float heading, const bool is_wind_valid) const;
 
 	float getCorrectedLateralAccelSetpoint(float lateral_accel_sp);
 

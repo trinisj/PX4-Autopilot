@@ -1,0 +1,130 @@
+#!/bin/sh
+#
+# @name trinidrone
+#
+# @type Quadrotor x
+# @class Copter
+#
+# [2026-09-08][trinidrone] Real vehicle airframe
+#
+#   Frame convention:
+#     nose = body -z (thrust axis)  -> PX4 sees a standard quad in hover
+#
+#   Geometry (from drawing 2026-08-28):
+#     total length 672.5 mm, body dia 87 mm
+#     arm radius   226 mm  -> X-layout moment arm 159.8 mm = 226/sqrt(2)
+#     C.G          304 mm from nose
+#     prop disc    164 mm behind C.G
+#     MTOW         4.3 kg
+#
+#   Propulsion:
+#     motor 700 KV / battery 12S / prop 7x13 2-blade pusher / cant angle 0
+#
+#   FC: Pixhawk 6X Mini, mounted with arrow toward nose
+#
+
+. ${R}etc/init.d/rc.mc_defaults
+
+#---------------------------------------------------------------
+# Control Allocator - PX4 standard quad X
+#---------------------------------------------------------------
+#   motor1 front-right CCW  KM +0.05
+#   motor2 rear-left   CCW  KM +0.05
+#   motor3 front-left  CW   KM -0.05
+#   motor4 rear-right  CW   KM -0.05
+#
+#   0.1598 = 226 / sqrt(2).  NOT 226.
+#   PZ = +0.164 : prop disc is 164 mm behind C.G in FRD
+#
+param set-default CA_AIRFRAME 0
+param set-default CA_ROTOR_COUNT 4
+
+param set-default CA_ROTOR0_PX  0.1598
+param set-default CA_ROTOR0_PY  0.1598
+param set-default CA_ROTOR0_PZ  0.1640
+param set-default CA_ROTOR0_KM  0.05
+
+param set-default CA_ROTOR1_PX -0.1598
+param set-default CA_ROTOR1_PY -0.1598
+param set-default CA_ROTOR1_PZ  0.1640
+param set-default CA_ROTOR1_KM  0.05
+
+param set-default CA_ROTOR2_PX  0.1598
+param set-default CA_ROTOR2_PY -0.1598
+param set-default CA_ROTOR2_PZ  0.1640
+param set-default CA_ROTOR2_KM -0.05
+
+param set-default CA_ROTOR3_PX -0.1598
+param set-default CA_ROTOR3_PY  0.1598
+param set-default CA_ROTOR3_PZ  0.1640
+param set-default CA_ROTOR3_KM -0.05
+
+#---------------------------------------------------------------
+# FC mounting compensation
+#---------------------------------------------------------------
+#   FC arrow (+x) points toward the nose.
+#   In hover the nose points up, so FC +x points up.
+#   Verify on site: stand the vehicle nose-up, QGC horizon must be level.
+#   If inverted, change to 25 and REDO calibration.
+#
+param set-default SENS_BOARD_ROT 24
+
+#   IMU lever arm in body FRD. Nose is -z, so negative.
+#   Update with the measured FC position: -(0.304 - x_from_nose)
+param set-default EKF2_IMU_POS_X 0.0
+param set-default EKF2_IMU_POS_Y 0.0
+param set-default EKF2_IMU_POS_Z -0.154
+
+#---------------------------------------------------------------
+# Thrust
+#---------------------------------------------------------------
+#   Conservative start. Confirmed by hover thrust estimator in U3.
+#   Pilot report of 45 percent was on ArduCopter and uses a different
+#   definition, so treat it as reference only.
+param set-default MPC_THR_HOVER 0.49
+param set-default MPC_USE_HTE 1
+param set-default THR_MDL_FAC 0.3
+
+#---------------------------------------------------------------
+# Envelope - expanded stepwise in U6
+#---------------------------------------------------------------
+param set-default MPC_TILTMAX_AIR 45
+param set-default MPC_MAN_TILT_MAX 45
+param set-default MPC_XY_VEL_MAX 5.0
+param set-default MPC_XY_CRUISE 3.0
+param set-default MPC_Z_VEL_MAX_UP 3.0
+param set-default MPC_Z_VEL_MAX_DN 2.0
+
+#---------------------------------------------------------------
+# Rate control - yaw authority is weak (cant angle 0)
+#---------------------------------------------------------------
+#   Nose-axis authority is 1/5 to 1/3 of roll/pitch.
+#   SITL showed unallocated yaw torque up to 10x roll/pitch.
+#   Start low and raise carefully in U4.
+param set-default MC_YAWRATE_P 0.05
+param set-default MC_YAWRATE_I 0.02
+param set-default MC_YAWRATE_D 0.0
+param set-default MC_YAW_P 1.5
+
+#---------------------------------------------------------------
+# Vibration filter - set from U2 jig FFT
+#---------------------------------------------------------------
+param set-default IMU_GYRO_CUTOFF 40
+
+#---------------------------------------------------------------
+# Failsafe - real vehicle values
+#---------------------------------------------------------------
+param set-default COM_RC_IN_MODE 0
+param set-default NAV_RCL_ACT 2
+param set-default NAV_DLL_ACT 2
+
+#---------------------------------------------------------------
+# Logging - from boot during development
+#---------------------------------------------------------------
+param set-default SDLOG_MODE 0
+param set-default SDLOG_PROFILE 3
+
+#---------------------------------------------------------------
+# [2026-09-15][trinidrone] guidance
+#---------------------------------------------------------------
+kd_guidance start

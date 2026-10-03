@@ -248,7 +248,9 @@ FixedWingModeManager::vehicle_attitude_poll()
 
 		const Eulerf euler_angles(R);
 		_yaw = euler_angles(2);
-
+		// 261003
+		_pitch = euler_angles(1);
+		/**************************************************************************/
 		const Vector3f body_acceleration = R.transpose() * Vector3f{_local_pos.ax, _local_pos.ay, _local_pos.az};
 		_body_acceleration_x = body_acceleration(0);
 
@@ -1776,13 +1778,23 @@ FixedWingModeManager::control_manual_altitude(const float control_interval, cons
 		throttle_max = 0.0f;
 	}
 
+	// 261003
+	const bool fw_entry_bridge = hrt_elapsed_time(&_fw_entry_ts) < FW_ENTRY_OPEN_LOOP_DURATION;
+	/**************************************************************************/
+
 	const fixed_wing_longitudinal_setpoint_s fw_longitudinal_control_sp = {
 		.timestamp = hrt_absolute_time(),
 		.altitude = NAN,
 		.height_rate = height_rate_sp,
 		.equivalent_airspeed = get_manual_airspeed_setpoint(),
-		.pitch_direct = NAN,
-		.throttle_direct = NAN
+
+	//	.pitch_direct = NAN,
+	//	.throttle_direct = NAN
+	// 261003
+		.pitch_direct = fw_entry_bridge ? _fw_entry_pitch_hold : NAN,
+		.throttle_direct = fw_entry_bridge ? _param_fw_thr_trim.get() : NAN
+	/**************************************************************************/
+
 	};
 
 	_longitudinal_ctrl_sp_pub.publish(fw_longitudinal_control_sp);
@@ -1843,6 +1855,13 @@ FixedWingModeManager::control_manual_position(const hrt_abstime now, const float
 			_yaw_lock_engaged = true;
 		}
 
+		// 261003
+		if (_vehicle_status.is_vtol && _vehicle_status.in_transition_mode) {
+			_hdg_hold_enabled = false;
+			_yaw_lock_engaged = true;
+		}
+		/**************************************************************************/
+
 		if (_yaw_lock_engaged) {
 
 			const Vector2f curr_pos_local{_local_pos.x, _local_pos.y};
@@ -1850,7 +1869,18 @@ FixedWingModeManager::control_manual_position(const hrt_abstime now, const float
 			if (!_hdg_hold_enabled) {
 				// just switched back from non heading-hold to heading hold
 				_hdg_hold_enabled = true;
-				_hdg_hold_yaw = _yaw;
+
+
+			//	_hdg_hold_yaw = _yaw;
+			// 261003
+				if (ground_speed.norm() > HDG_HOLD_MIN_GROUNDSPEED_FOR_COURSE) {
+					_hdg_hold_yaw = atan2f(ground_speed(1), ground_speed(0));
+
+				} else {
+					_hdg_hold_yaw = _yaw;
+				}
+			/**************************************************************************/
+
 
 				_hdg_hold_position = curr_pos_local;
 			}
@@ -1872,13 +1902,22 @@ FixedWingModeManager::control_manual_position(const hrt_abstime now, const float
 		}
 	}
 
+	// 261003
+	const bool fw_entry_bridge = hrt_elapsed_time(&_fw_entry_ts) < FW_ENTRY_OPEN_LOOP_DURATION;
+	/**************************************************************************/
+
 	const fixed_wing_longitudinal_setpoint_s fw_longitudinal_control_sp = {
 		.timestamp = hrt_absolute_time(),
 		.altitude = NAN,
 		.height_rate = height_rate_sp,
 		.equivalent_airspeed = get_manual_airspeed_setpoint(),
-		.pitch_direct = NAN,
-		.throttle_direct = NAN
+	//	.pitch_direct = NAN,
+	//	.throttle_direct = NAN
+	// 261003
+		.pitch_direct = fw_entry_bridge ? _fw_entry_pitch_hold : NAN,
+		.throttle_direct = fw_entry_bridge ? _param_fw_thr_trim.get() : NAN
+	/**************************************************************************/
+
 	};
 
 	_longitudinal_ctrl_sp_pub.publish(fw_longitudinal_control_sp);
@@ -2123,6 +2162,19 @@ FixedWingModeManager::Run()
 			_lpos_where_backtrans_started = Vector2f(NAN, NAN);
 			_backtrans_heading = NAN;
 		}
+
+		// 261003
+		const bool just_entered_fw_from_transition = _was_in_transition_to_fw
+				&& !_vehicle_status.in_transition_to_fw
+				&& (_vehicle_status.vehicle_type == vehicle_status_s::VEHICLE_TYPE_FIXED_WING);
+
+		if (just_entered_fw_from_transition) {
+			_fw_entry_ts = now;
+			_fw_entry_pitch_hold = _pitch;
+		}
+
+		_was_in_transition_to_fw = _vehicle_status.in_transition_to_fw;
+		/**************************************************************************/
 
 
 		Vector2d curr_pos(_current_latitude, _current_longitude);

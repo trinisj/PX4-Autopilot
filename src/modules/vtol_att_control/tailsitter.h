@@ -47,6 +47,8 @@
 #include <parameters/param.h>
 #include <drivers/drv_hrt.h>
 #include <matrix/matrix/math.hpp>
+#include <uORB/Subscription.hpp>
+#include <uORB/topics/hover_thrust_estimate.h>
 
 // [rad] Pitch threshold required for completing transition to fixed-wing in automatic transitions
 static constexpr float PITCH_THRESHOLD_AUTO_TRANSITION_TO_FW = -1.05f; // -60°
@@ -88,12 +90,55 @@ private:
 	matrix::Quatf _q_trans_sp;
 	matrix::Vector3f _trans_rot_axis;
 
+	/* [2026-09 custom] Front transition tilt progress, advanced only while
+	 * the measured sink rate is within VT_F_TR_SINK_MAX. Separate from
+	 * _time_since_trans_start (which VtolType keeps advancing regardless -
+	 * still used for VT_TRANS_TIMEOUT/VT_TRANS_MIN_TM, unchanged), so the
+	 * overall transition timeout budget is untouched; only how fast the
+	 * tilt setpoint itself is allowed to advance within that budget
+	 * changes. See update_transition_state() and VT_F_TR_SINK_MAX. */
+	float _trans_progress_time{0.f};
+
+	/* [2026-09 custom] HANDOFF 9: back-transition analog of _trans_progress_time.
+	 * Advances only while measured groundspeed is below VT_B_TR_SPD_GATE - see
+	 * update_transition_state() TRANSITION_BACK branch and VT_B_TR_SPD_GATE. */
+	float _back_trans_progress_time{0.f};
+
+	/* [2026-09 custom] Measured lift fraction (aerodynamic vertical force /
+	 * weight), estimated from the vertical force balance during the front
+	 * transition. See updateLiftEstimate(). */
+	uORB::Subscription _hover_thrust_estimate_sub{ORB_ID(hover_thrust_estimate)};
+	float _hover_thrust{NAN};
+	float _lift_frac_filt{0.f};
+	static constexpr float LIFT_EST_TAU = 0.5f; // [s] low-pass time constant
+	void updateLiftEstimate();
+	float hoverThrust();
+
+	/* [2026-09 custom] Lift-paced tilt cap: the largest tilt at which the
+	 * usable thrust plus the currently measured lift can still hold
+	 * altitude. See update_transition_state(). Exposed for logging/debug. */
+	float _tilt_cap{0.f};
+	float _trans_start_tilt{0.f}; ///< [rad] forward tilt of the transition start attitude
+
+	/* [2026-09 custom] Abort of a front transition that is already fast
+	 * (nose near horizontal): go through the ramped back transition instead
+	 * of switching to MC instantly. See abortFrontTransitionToBack(). */
+	bool _back_trans_from_front{false};
+	bool frontTransitionIsFast();
+	void abortFrontTransitionToBack();
+
 	void parameters_update() override;
 
 	bool isFrontTransitionCompletedBase() override;
 
 	DEFINE_PARAMETERS_CUSTOM_PARENT(VtolType,
-					(ParamFloat<px4::params::FW_PSP_OFF>) _param_fw_psp_off
+					(ParamFloat<px4::params::FW_PSP_OFF>) _param_fw_psp_off,
+					(ParamFloat<px4::params::VT_F_TR_SINK_MAX>) _param_vt_f_tr_sink_max,
+					(ParamFloat<px4::params::VT_B_TR_SPD_GATE>) _param_vt_b_tr_spd_gate,
+					(ParamFloat<px4::params::VT_F_TR_LIFT_MIN>) _param_vt_f_tr_lift_min,
+					(ParamFloat<px4::params::MPC_THR_HOVER>) _param_mpc_thr_hover,
+					(ParamFloat<px4::params::MPC_THR_MAX>) _param_mpc_thr_max,
+					(ParamFloat<px4::params::MPC_THR_XY_MARG>) _param_mpc_thr_xy_marg
 				       )
 
 

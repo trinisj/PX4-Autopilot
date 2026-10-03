@@ -137,7 +137,7 @@ PARAM_DEFINE_FLOAT(VT_ARSP_BLEND, 8.0f);
  *
  * @unit m/s
  * @min 0.00
- * @max 30.00
+ * @max 100.00
  * @increment 1
  * @decimal 2
  * @group VTOL Attitude Control
@@ -284,6 +284,109 @@ PARAM_DEFINE_INT32(VT_FW_QC_HMAX, 0);
  * @group VTOL Attitude Control
  */
 PARAM_DEFINE_FLOAT(VT_F_TR_OL_TM, 6.0f);
+
+// 261003
+/**
+ * Front transition maximum tolerated sink rate before holding tilt progress
+ *
+ * [2026-09 custom] The stock front-transition tilt setpoint advances purely
+ * on elapsed time (VT_F_TRANS_DUR), reaching close to 90 deg regardless of
+ * whether the airframe actually has enough airspeed/lift yet to be tilted
+ * that far - at full tilt, multicopter thrust has almost no vertical
+ * component left, so an airframe that generates little lift at low speed
+ * (e.g. no wing, small fin-only surfaces needing high speed for meaningful
+ * lift) can be committed to a tilt it cannot yet support while it waits for
+ * VT_ARSP_TRANS to be reached, which shows up as an uncontrolled sink.
+ *
+ * This parameter bounds that: while in the front transition, if the
+ * measured climb rate (vehicle_local_position.vz, NED, positive = sinking)
+ * exceeds this value, further tilt progress is held (not reversed) until
+ * the sink rate comes back under the limit. This makes the tilt schedule
+ * respond to the airframe's actual, currently measured lift/thrust
+ * performance instead of only to a pre-set duration - conceptually the
+ * same judgement a pilot makes flying the transition by feel, but driven by
+ * the real climb-rate measurement each cycle rather than a fixed number
+ * picked in advance.
+ *
+ * Set higher than the sink rate seen during ordinary, healthy front
+ * transitions on this airframe (check tecs_status / vehicle_local_position
+ * logs from a transition that completed cleanly) so it does not fire on
+ * normal transition sink; set low enough that it still catches a genuine
+ * "falling, not flying" situation before significant altitude is lost.
+ * VT_F_TRANS_DUR and VT_TRANS_TIMEOUT still bound the overall transition -
+ * this only slows tilt progress within that budget, it does not remove
+ * those limits.
+ *
+ * @unit m/s
+ * @min 0.5
+ * @max 20.0
+ * @increment 0.1
+ * @decimal 1
+ * @group VTOL Attitude Control
+ */
+PARAM_DEFINE_FLOAT(VT_F_TR_SINK_MAX, 3.0f);
+
+/**
+ * Back transition nose-up speed gate (tailsitter)
+ *
+ * [2026-09 custom] HANDOFF 9: symmetric to VT_F_TR_SINK_MAX, but for the
+ * back transition. Stock advances the nose-up schedule purely on
+ * _time_since_trans_start, regardless of speed. On this airframe, above
+ * roughly this speed the fins' aerodynamic restoring moment overpowers the
+ * MC differential-thrust pitch authority: commanding nose-up does not
+ * raise the actual nose (log_6_2026-9-27-18-52-50, log_3_2026-9-27-22-54-28
+ * back transitions starting at 90+ m/s: commanded nose 7 -> 52 deg, actual
+ * nose -14 deg and falling, motors pinned 1.0/0.0, roll/altitude both
+ * unstable while this continues), and only wastes the pitch fight while
+ * the vehicle is also not decelerating any faster for it.
+ *
+ * While the measured groundspeed (airspeed if available upstream) is above
+ * this value, the nose-up schedule is held at its start position instead
+ * of advancing - the vehicle keeps its cruise-like attitude and decelerates
+ * on drag alone. Once speed drops below this value the schedule resumes
+ * and the nose comes up for real. This trades transition distance/time
+ * (and some altitude, since MC altitude-hold may climb while decelerating
+ * at this attitude) for a nose-up attempt the airframe can actually make
+ * good on. VT_B_TRANS_DUR/VT_TRANS_TIMEOUT still bound the overall back
+ * transition.
+ *
+ * Set from the speed at which back transitions on this airframe are
+ * observed to actually raise the nose (5.2/8.3: ~60 m/s). Position/velocity
+ * data unavailable is treated as "still fast" (fail safe: hold, don't
+ * raise blind).
+ *
+ * @unit m/s
+ * @min 5.0
+ * @max 100.0
+ * @increment 1.0
+ * @decimal 1
+ * @group VTOL Attitude Control
+ */
+PARAM_DEFINE_FLOAT(VT_B_TR_SPD_GATE, 60.0f);
+
+/**
+ * Front transition minimum measured lift fraction (tailsitter)
+ *
+ * [2026-09 custom] Front transition to fixed-wing only completes once the
+ * measured aerodynamic lift, as a fraction of weight, reaches this value
+ * (in addition to the pitch and VT_ARSP_TRANS conditions). Lift is
+ * estimated each cycle from the vertical force balance:
+ *   lift/W = 1 + a_up/g - (thrust / hover_thrust) * cos(tilt)
+ * low-pass filtered with a 0.5 s time constant.
+ *
+ * Hover reads ~0. Tune from the "front transition complete" log message
+ * and from logs of transitions that went well.
+ *
+ * Set to 0 to disable (stock behaviour for this condition).
+ *
+ * @min 0.0
+ * @max 1.5
+ * @increment 0.05
+ * @decimal 2
+ * @group VTOL Attitude Control
+ */
+PARAM_DEFINE_FLOAT(VT_F_TR_LIFT_MIN, 0.7f);
+/***********************************************************************/
 
 /**
  * Differential thrust in forwards flight.

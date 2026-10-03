@@ -112,6 +112,8 @@ static constexpr float HDG_HOLD_YAWRATE_THRESH = 0.15f;
 // [.] max manual roll/yaw normalized input from user which does not change the locked heading
 static constexpr float HDG_HOLD_MAN_INPUT_THRESH = 0.01f;
 
+static constexpr float HDG_HOLD_MIN_GROUNDSPEED_FOR_COURSE = 5.0f;	//261003
+
 // [us] time after which we abort landing if terrain estimate is not valid. this timer start whenever the terrain altitude
 // was previously valid, and has changed to invalid.
 static constexpr hrt_abstime TERRAIN_ALT_TIMEOUT = 1_s;
@@ -150,6 +152,8 @@ static constexpr float POST_TOUCHDOWN_CLAMP_TIME = 0.5f;
 
 // [] Stick deadzon
 static constexpr float kStickDeadBand = 0.06f;
+
+static constexpr hrt_abstime FW_ENTRY_OPEN_LOOP_DURATION = 2_s;		//261003
 
 class FixedWingModeManager final : public ModuleBase<FixedWingModeManager>, public ModuleParams,
 	public px4::WorkItem
@@ -251,6 +255,12 @@ private:
 	float _current_altitude{0.f};
 
 	float _yaw{0.0f};
+
+	float _pitch{0.0f};			// 261003
+	bool _was_in_transition_to_fw{false};	// 261003
+	hrt_abstime _fw_entry_ts{0};		// 261003
+	float _fw_entry_pitch_hold{0.0f};	// 261003
+
 	float _yawrate{0.0f};
 
 	float _body_acceleration_x{0.f};
@@ -849,6 +859,7 @@ private:
 		(ParamFloat<px4::params::FW_T_SINK_R_SP>) _param_sinkrate_target,
 		(ParamFloat<px4::params::FW_THR_IDLE>) _param_fw_thr_idle,
 		(ParamFloat<px4::params::FW_THR_MAX>) _param_fw_thr_max,
+		(ParamFloat<px4::params::FW_THR_TRIM>) _param_fw_thr_trim,		// 261003
 		(ParamFloat<px4::params::FW_THR_MIN>) _param_fw_thr_min,
 		(ParamFloat<px4::params::FW_FLAPS_LND_SCL>) _param_fw_flaps_lnd_scl,
 		(ParamFloat<px4::params::FW_FLAPS_TO_SCL>) _param_fw_flaps_to_scl,

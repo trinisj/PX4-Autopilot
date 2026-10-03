@@ -681,3 +681,31 @@ PARAM_DEFINE_FLOAT(FW_ENT_TIMEOUT, 8.0f);
  * @group FW Mode Manager
  */
 PARAM_DEFINE_FLOAT(FW_ENT_BLEND, 2.0f);
+
+/**
+ * FW entry bridge: sink-rate feedback gain
+ *
+ * While the vehicle sinks faster than 0.3 m/s during the bridge, the pitch
+ * command is raised at this rate (deg/s) per m/s of excess sink rate. Climbing is
+ * not limited. 0 disables the feedback.
+ *
+ * @unit deg/s
+ * @min 0
+ * @max 10
+ * @decimal 1
+ * @increment 0.1
+ * @group FW Mode Manager
+ */
+PARAM_DEFINE_FLOAT(FW_ENT_SINK_KI, 1.5f);
+
+/**
+ * FW entry bridge: maximum sink-rate feedback pitch
+ *
+ * @unit deg
+ * @min 0
+ * @max 20
+ * @decimal 1
+ * @increment 0.5
+ * @group FW Mode Manager
+ */
+PARAM_DEFINE_FLOAT(FW_ENT_SINK_MAX, 8.0f);

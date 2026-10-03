@@ -170,12 +170,20 @@ static constexpr float kStickDeadBand = 0.06f;
  * Instead the pitch is ramped from the handoff pitch down to FW_ENT_PIT_END
  * as ground speed rises from the handoff speed to FW_ENT_SPD_END (lift ~ AoA *
  * V^2, so required AoA falls with speed), with NO altitude hold; height is
- * only controlled by TECS after the bridge, blended in over FW_ENT_BLEND. */
+ * only controlled by TECS after the bridge, blended in over FW_ENT_BLEND.
+ *
+ * A one-sided sink-rate feedback (FW_ENT_SINK_KI, FW_ENT_SINK_MAX) adds pitch
+ * while the vehicle sinks: in SITL the achieved pitch lags the command by
+ * 2-4 deg, so the open-loop ramp alone left a steady ~1.5 m/s sink for the whole
+ * bridge (log_9 / log_7 of 2026-10-3-18-0x). Climbing is allowed. */
 static constexpr float FW_ENTRY_MIN_BRIDGE_S = 1.0f;       ///< earliest the bridge may end [s]
 static constexpr float FW_ENTRY_PITCH_RATE_DEG_S = 5.0f;   ///< max |d(pitch cmd)/dt| [deg/s]
 static constexpr float FW_ENTRY_SINK_HOLD_MS = 1.5f;       ///< while sinking faster than this, never reduce pitch [m/s]
 static constexpr float FW_ENTRY_SINK_DONE_MS = 1.0f;       ///< bridge may only end below this sink rate [m/s]
 static constexpr float FW_ENTRY_PITCH_ERR_DONE_DEG = 5.0f; ///< bridge may only end when |pitch - cmd| below this [deg] (SITL shows ~4 deg tracking lag)
+static constexpr float FW_ENTRY_SINK_ALLOW_MS = 0.3f;      ///< sink rate tolerated before the sink-rate feedback raises pitch [m/s]
+static constexpr float FW_ENTRY_CLIMB_ALLOW_MS = 1.5f;     ///< climb rate tolerated before the feedback is wound back [m/s]
+static constexpr float FW_ENTRY_PITCH_CMD_MAX_DEG = 25.0f; ///< hard limit of the bridge pitch command [deg]
 static constexpr float FW_ENTRY_TECS_MAX_AGE_S = 0.5f;     ///< max age of tecs_status usable for the blend [s]
 
 class FixedWingModeManager final : public ModuleBase<FixedWingModeManager>, public ModuleParams,
@@ -293,6 +301,7 @@ private:
 	float _fw_entry_pitch_hold{0.0f};     ///< FW-frame pitch at handoff [rad]
 	float _fw_entry_speed{0.0f};          ///< ground speed at handoff [m/s]
 	float _fw_entry_pitch_cmd{0.0f};      ///< current ramp pitch command [rad]
+	float _fw_entry_sink_corr{0.0f};      ///< sink-rate feedback pitch correction, >= 0 [rad]
 	float _fw_entry_pitch_out{NAN};       ///< published pitch_direct (NAN = bridge inactive) [rad]
 	float _fw_entry_thr_out{NAN};         ///< published throttle_direct (NAN = bridge inactive)
 	uORB::Subscription _tecs_status_sub{ORB_ID(tecs_status)};
@@ -901,6 +910,8 @@ private:
 		(ParamFloat<px4::params::FW_ENT_SPD_END>) _param_fw_ent_spd_end,
 		(ParamFloat<px4::params::FW_ENT_TIMEOUT>) _param_fw_ent_timeout,
 		(ParamFloat<px4::params::FW_ENT_BLEND>) _param_fw_ent_blend,
+		(ParamFloat<px4::params::FW_ENT_SINK_KI>) _param_fw_ent_sink_ki,
+		(ParamFloat<px4::params::FW_ENT_SINK_MAX>) _param_fw_ent_sink_max,
 		(ParamFloat<px4::params::FW_THR_MIN>) _param_fw_thr_min,
 		(ParamFloat<px4::params::FW_FLAPS_LND_SCL>) _param_fw_flaps_lnd_scl,
 		(ParamFloat<px4::params::FW_FLAPS_TO_SCL>) _param_fw_flaps_to_scl,

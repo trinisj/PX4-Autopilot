@@ -1791,7 +1791,20 @@ FixedWingModeManager::fw_entry_bridge_update(const hrt_abstime now)
 		const float s = (span > 1.f) ? math::constrain((gs - _fw_entry_speed) / span, 0.f, 1.f)
 				: (gs >= v_end ? 1.f : 0.f);
 
-		float target = _fw_entry_pitch_hold + (pitch_end - _fw_entry_pitch_hold) * s;
+		// one-sided sink-rate feedback: add pitch while sinking, wind back only when climbing hard
+		const float ki = radians(_param_fw_ent_sink_ki.get());
+
+		if (vz > FW_ENTRY_SINK_ALLOW_MS) {
+			_fw_entry_sink_corr += ki * (vz - FW_ENTRY_SINK_ALLOW_MS) * dt;
+
+		} else if (vz < -FW_ENTRY_CLIMB_ALLOW_MS) {
+			_fw_entry_sink_corr -= ki * (-vz - FW_ENTRY_CLIMB_ALLOW_MS) * dt;
+		}
+
+		_fw_entry_sink_corr = math::constrain(_fw_entry_sink_corr, 0.f, radians(_param_fw_ent_sink_max.get()));
+
+		float target = _fw_entry_pitch_hold + (pitch_end - _fw_entry_pitch_hold) * s + _fw_entry_sink_corr;
+		target = math::min(target, radians(FW_ENTRY_PITCH_CMD_MAX_DEG));
 
 		const bool sinking_hold = vz > FW_ENTRY_SINK_HOLD_MS;
 
@@ -1812,9 +1825,10 @@ FixedWingModeManager::fw_entry_bridge_update(const hrt_abstime now)
 		if (settled || timed_out) {
 			_fw_entry_phase = FwEntryPhase::BLEND;
 			_fw_entry_blend_ts = now;
-			PX4_INFO("FW entry bridge %s: t %.1f s, gs %.1f m/s, sink %.2f m/s, pitch %.1f deg (cmd %.1f)",
+			PX4_INFO("FW entry bridge %s: t %.1f s, gs %.1f m/s, sink %.2f m/s, pitch %.1f deg (cmd %.1f, sink corr %.1f)",
 				 settled ? "settled" : "TIMEOUT", (double)elapsed, (double)gs, (double)vz,
-				 (double)math::degrees(_pitch), (double)math::degrees(_fw_entry_pitch_cmd));
+				 (double)math::degrees(_pitch), (double)math::degrees(_fw_entry_pitch_cmd),
+				 (double)math::degrees(_fw_entry_sink_corr));
 		}
 
 		return;
@@ -2249,6 +2263,7 @@ FixedWingModeManager::Run()
 			_fw_entry_last_ts = now;
 			_fw_entry_pitch_hold = _pitch;
 			_fw_entry_pitch_cmd = _pitch;
+			_fw_entry_sink_corr = 0.f;
 			_fw_entry_speed = Vector2f(_local_pos.vx, _local_pos.vy).norm();
 		}
 

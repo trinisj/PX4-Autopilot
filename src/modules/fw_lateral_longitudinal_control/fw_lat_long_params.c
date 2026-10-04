@@ -282,3 +282,37 @@ PARAM_DEFINE_FLOAT(FW_WIND_ARSP_SC, 0.f);
  * @group FW Longitudinal Control
  */
 PARAM_DEFINE_FLOAT(FW_T_SINK_MAX, 5.0f);
+
+/**
+ * Speed-change pitch feedforward gain
+ *
+ * Pitch change per m/s of speed change relative to the filtered speed: the
+ * pitch is reduced when speeding up and raised when slowing down, so that a
+ * lift-by-angle-of-attack vehicle (wingless tailsitter) keeps its altitude
+ * while the speed changes. Sim data of the trinidrone: about 0.12 deg/(m/s)
+ * between 60 and 100 m/s. 0 disables.
+ *
+ * @unit deg
+ * @min 0
+ * @max 0.5
+ * @decimal 3
+ * @increment 0.01
+ * @group FW Longitudinal Control
+ */
+PARAM_DEFINE_FLOAT(FW_LIFT_FF_GN, 0.f);
+
+/**
+ * Speed-change pitch feedforward time constant
+ *
+ * Time constant of the speed filter of the feedforward, i.e. how long the
+ * feedforward lasts after a speed change. Should match how fast TECS's pitch
+ * integrator learns the new trim.
+ *
+ * @unit s
+ * @min 0.5
+ * @max 20
+ * @decimal 1
+ * @increment 0.5
+ * @group FW Longitudinal Control
+ */
+PARAM_DEFINE_FLOAT(FW_LIFT_FF_TC, 5.f);

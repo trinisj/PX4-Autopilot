@@ -138,6 +138,8 @@ private:
 
 	DEFINE_PARAMETERS(
 		(ParamFloat<px4::params::FW_PSP_OFF>) _param_fw_psp_off,
+		(ParamFloat<px4::params::FW_LIFT_FF_GN>) _param_fw_lift_ff_gn,
+		(ParamFloat<px4::params::FW_LIFT_FF_TC>) _param_fw_lift_ff_tc,
 		(ParamBool<px4::params::FW_USE_AIRSPD>) _param_fw_use_airspd,
 		(ParamFloat<px4::params::NAV_FW_ALT_RAD>) _param_nav_fw_alt_rad,
 		(ParamFloat<px4::params::FW_R_LIM>) _param_fw_r_lim,
@@ -192,6 +194,9 @@ private:
 	hrt_abstime _time_wind_last_received{0};
 	SlewRate<float> _roll_slew_rate;
 	float _yaw{0.f};
+
+	// [2026-10 custom] speed-change pitch feedforward (washout), see liftPitchFeedforward()
+	float _lift_ff_speed_lp{NAN};
 	struct lateral_control_state {
 		matrix::Vector2f ground_speed;
 		matrix::Vector2f wind_speed;
@@ -240,6 +245,7 @@ private:
 
 	// [2026-10 custom] heading is the FW-frame yaw (_yaw), NOT local_pos.heading: for a tailsitter the latter is the
 	// MC-frame yaw of the EKF quaternion, which follows the bank angle in fixed-wing flight.
+	float liftPitchFeedforward(const float dt, const bool reset);
 	float getGuidanceQualityFactor(const vehicle_local_position_s &local_pos, const float heading, const bool is_wind_valid) const;
 
 	float getCorrectedLateralAccelSetpoint(float lateral_accel_sp);

@@ -224,6 +224,13 @@ void FwLateralLongitudinalControl::Run()
 						  );
 
 			pitch_sp = PX4_ISFINITE(_long_control_sp.pitch_direct) ? _long_control_sp.pitch_direct : _tecs.get_pitch_setpoint();
+
+			// [2026-10 custom] speed-change pitch feedforward: required angle of attack falls with speed (wingless tailsitter,
+			// lift ~ AoA * V^2). TECS's pitch integrator is too slow to follow throttle-commanded speed changes.
+			if (_param_fw_lift_ff_gn.get() > FLT_EPSILON) {
+				const float lift_ff = liftPitchFeedforward(control_interval, PX4_ISFINITE(_long_control_sp.pitch_direct));
+				pitch_sp = math::constrain(pitch_sp + lift_ff, _long_configuration.pitch_min, _long_configuration.pitch_max);
+			}
 			throttle_sp = PX4_ISFINITE(_long_control_sp.throttle_direct) ? _long_control_sp.throttle_direct :
 				      _tecs.get_throttle_setpoint();
 
@@ -709,6 +716,26 @@ void FwLateralLongitudinalControl::updateTECSAltitudeTimeConstant(const bool is_
 	}
 
 	_tecs_alt_time_const_slew_rate.update(alt_tracking_tc, dt);
+}
+
+/* [2026-10 custom] Pitch feedforward for speed changes (washout form).
+ * ff = -gain * (V - V_lp), V = ground speed, V_lp = V low-pass filtered with FW_LIFT_FF_TC. In steady speed ff = 0 (TECS's
+ * integrator carries the trim pitch); while speeding up the pitch is reduced immediately, while slowing down it is raised
+ * immediately, and the ff fades out as TECS's integrator learns the new trim. Reset while the FW entry bridge uses pitch_direct. */
+float FwLateralLongitudinalControl::liftPitchFeedforward(const float dt, const bool reset)
+{
+	const float gain = math::radians(_param_fw_lift_ff_gn.get()); // rad per (m/s)
+	const float v = Vector2f(_local_pos.vx, _local_pos.vy).norm();
+
+	if (gain <= 0.f || reset || !PX4_ISFINITE(v) || !PX4_ISFINITE(_lift_ff_speed_lp)) {
+		_lift_ff_speed_lp = v;
+		return 0.f;
+	}
+
+	const float tc = math::max(_param_fw_lift_ff_tc.get(), 0.1f);
+	_lift_ff_speed_lp += (v - _lift_ff_speed_lp) * math::constrain(dt / tc, 0.f, 1.f);
+
+	return math::constrain(-gain * (v - _lift_ff_speed_lp), -math::radians(10.f), math::radians(10.f));
 }
 
 float FwLateralLongitudinalControl::getGuidanceQualityFactor(const vehicle_local_position_s &local_pos, const float heading, const bool is_wind_valid) const

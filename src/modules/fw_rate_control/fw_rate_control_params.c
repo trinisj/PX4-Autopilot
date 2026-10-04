@@ -160,7 +160,7 @@ PARAM_DEFINE_FLOAT(FW_RR_IMAX, 0.2f);
  * @increment 0.005
  * @group FW Rate Control
  */
-PARAM_DEFINE_FLOAT(FW_YR_P, 0.05f);
+PARAM_DEFINE_FLOAT(FW_YR_P, 0.1f);
 
 /**
  * Yaw rate derivative gain

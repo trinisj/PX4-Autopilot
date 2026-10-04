@@ -712,3 +712,51 @@ PARAM_DEFINE_FLOAT(FW_ENT_SINK_KI, 1.5f);
  * @group FW Mode Manager
  */
 PARAM_DEFINE_FLOAT(FW_ENT_SINK_MAX, 8.0f);
+
+/**
+ * FW entry bridge: post-blend sink-rate feedback duration
+ *
+ * After the blend into TECS, the sink-rate feedback (FW_ENT_SINK_KI/MAX) keeps
+ * adding pitch on top of the TECS pitch for this long (faded out over the last
+ * 3 s). TECS's pitch integrator is still catching up with the trim pitch there.
+ * 0 disables.
+ *
+ * @unit s
+ * @min 0
+ * @max 30
+ * @decimal 1
+ * @increment 0.5
+ * @group FW Mode Manager
+ */
+PARAM_DEFINE_FLOAT(FW_ENT_POST, 10.0f);
+
+/**
+ * Incremental manual throttle rate (fixed-wing manual modes)
+ *
+ * If > 0 the throttle stick integrates into a thrust command in fixed-wing
+ * Altitude/Position mode: stick centre holds the current thrust, stick up
+ * increases it (speed up), stick down decreases it (slow down). The value is the
+ * thrust change per second at full stick deflection. 0 = stock behaviour.
+ * Pitch (altitude) stays with TECS.
+ *
+ * @unit 1/s
+ * @min 0
+ * @max 2
+ * @decimal 2
+ * @increment 0.05
+ * @group FW Mode Manager
+ */
+PARAM_DEFINE_FLOAT(FW_MAN_THR_RATE, 0.0f);
+
+/**
+ * Minimum thrust of the incremental manual throttle
+ *
+ * Keeps enough thrust for differential-thrust attitude control authority.
+ *
+ * @min 0
+ * @max 1
+ * @decimal 2
+ * @increment 0.05
+ * @group FW Mode Manager
+ */
+PARAM_DEFINE_FLOAT(FW_MAN_THR_MIN, 0.3f);

@@ -1841,6 +1841,29 @@ FixedWingModeManager::fw_entry_bridge_update(const hrt_abstime now)
 		return;
 	}
 
+	if (_fw_entry_phase == FwEntryPhase::POST) {
+		// TECS pitch (height loop, slow integrator) + sink-rate feedback; throttle fully from TECS
+		tecs_status_s tecs_p{};
+		const bool tecs_p_ok = _tecs_status_sub.copy(&tecs_p)
+				       && (hrt_elapsed_time(&tecs_p.timestamp) * 1e-6f < FW_ENTRY_TECS_MAX_AGE_S)
+				       && PX4_ISFINITE(tecs_p.pitch_sp_rad);
+		const float t_post = hrt_elapsed_time(&_fw_entry_post_ts) * 1e-6f;
+		const float t_end = _param_fw_ent_post.get();
+
+		if (!tecs_p_ok || t_post >= t_end) {
+			_fw_entry_phase = FwEntryPhase::NONE;
+			return;
+		}
+
+		const float dt_p = math::constrain((now - _fw_entry_last_ts) * 1e-6f, 0.f, 0.1f);
+		_fw_entry_last_ts = now;
+		fw_entry_update_sink_corr(vz, dt_p);
+
+		const float fade = math::constrain((t_end - t_post) / FW_ENTRY_POST_FADE_S, 0.f, 1.f);
+		_fw_entry_pitch_out = tecs_p.pitch_sp_rad + fade * _fw_entry_sink_corr;
+		return;
+	}
+
 	// BLEND: cross-fade from the last ramp command to TECS's own output
 	tecs_status_s tecs{};
 	const bool tecs_ok = _tecs_status_sub.copy(&tecs)
@@ -1850,8 +1873,16 @@ FixedWingModeManager::fw_entry_bridge_update(const hrt_abstime now)
 	const float blend_t = math::max(_param_fw_ent_blend.get(), 0.01f);
 	const float w = math::constrain(hrt_elapsed_time(&_fw_entry_blend_ts) * 1e-6f / blend_t, 0.f, 1.f);
 
-	if (!tecs_ok || w >= 1.f) {
+	if (!tecs_ok) {
 		_fw_entry_phase = FwEntryPhase::NONE;
+		return;
+	}
+
+	if (w >= 1.f) {
+		// blend finished: optionally keep the sink-rate feedback on top of TECS for FW_ENT_POST seconds
+		_fw_entry_phase = (_param_fw_ent_post.get() > 0.f) ? FwEntryPhase::POST : FwEntryPhase::NONE;
+		_fw_entry_post_ts = now;
+		_fw_entry_sink_corr = 0.f;
 		return;
 	}
 
@@ -1866,6 +1897,52 @@ FixedWingModeManager::fw_entry_bridge_update(const hrt_abstime now)
 
 	_fw_entry_pitch_out = pitch;
 	_fw_entry_thr_out = (1.f - w) * thr_trim + w * tecs.throttle_sp;
+}
+
+/* [2026-10 custom] Incremental manual throttle for FW flight: the throttle stick integrates into a thrust command
+ * (centre = hold current thrust, up = more thrust/faster, down = less/slower). Needed because with FW_USE_AIRSPD=0
+ * TECS runs without airspeed (TECS::enable_airspeed(false)) and cannot regulate speed at all.
+ * The throttle command is published as throttle_direct, pitch stays with TECS (height). Disabled by FW_MAN_THR_RATE=0. */
+void
+FixedWingModeManager::manual_throttle_update(const hrt_abstime now)
+{
+	_manual_thr_out = NAN;
+
+	const bool in_manual_fw = (_param_fw_man_thr_rate.get() > 0.f)
+				  && (_vehicle_status.vehicle_type == vehicle_status_s::VEHICLE_TYPE_FIXED_WING)
+				  && !_vehicle_status.in_transition_mode
+				  && _control_mode.flag_control_manual_enabled
+				  && (_fw_entry_phase == FwEntryPhase::NONE || _fw_entry_phase == FwEntryPhase::POST);
+
+	if (!in_manual_fw) {
+		_manual_thr_valid = false;
+		return;
+	}
+
+	if (!_manual_thr_valid) {
+		// take over from what TECS is commanding right now (bumpless)
+		tecs_status_s tecs{};
+		const bool tecs_ok = _tecs_status_sub.copy(&tecs) && PX4_ISFINITE(tecs.throttle_sp)
+				     && (hrt_elapsed_time(&tecs.timestamp) * 1e-6f < FW_ENTRY_TECS_MAX_AGE_S);
+		_manual_thr_cmd = tecs_ok ? tecs.throttle_sp : _param_fw_thr_trim.get();
+		_manual_thr_last_ts = now;
+		_manual_thr_valid = true;
+	}
+
+	const float dt = math::constrain((now - _manual_thr_last_ts) * 1e-6f, 0.f, 0.1f);
+	_manual_thr_last_ts = now;
+
+	// stick: +1 = throttle up. dead band around centre, rescaled to full range
+	const float stick = _manual_control_setpoint_for_airspeed;
+	float s = 0.f;
+
+	if (fabsf(stick) > FW_MAN_THR_DEADBAND) {
+		s = (stick - copysignf(FW_MAN_THR_DEADBAND, stick)) / (1.f - FW_MAN_THR_DEADBAND);
+	}
+
+	_manual_thr_cmd += _param_fw_man_thr_rate.get() * s * dt;
+	_manual_thr_cmd = math::constrain(_manual_thr_cmd, _param_fw_man_thr_min.get(), _param_fw_thr_max.get());
+	_manual_thr_out = _manual_thr_cmd;
 }
 
 void
@@ -1895,7 +1972,7 @@ FixedWingModeManager::control_manual_altitude(const float control_interval, cons
 		.height_rate = height_rate_sp,
 		.equivalent_airspeed = get_manual_airspeed_setpoint(),
 		.pitch_direct = _fw_entry_pitch_out,
-		.throttle_direct = _fw_entry_thr_out
+		.throttle_direct = PX4_ISFINITE(_fw_entry_thr_out) ? _fw_entry_thr_out : _manual_thr_out
 	};
 
 	_longitudinal_ctrl_sp_pub.publish(fw_longitudinal_control_sp);
@@ -2015,7 +2092,7 @@ FixedWingModeManager::control_manual_position(const hrt_abstime now, const float
 		.height_rate = height_rate_sp,
 		.equivalent_airspeed = get_manual_airspeed_setpoint(),
 		.pitch_direct = _fw_entry_pitch_out,
-		.throttle_direct = _fw_entry_thr_out
+		.throttle_direct = PX4_ISFINITE(_fw_entry_thr_out) ? _fw_entry_thr_out : _manual_thr_out
 	};
 
 	_longitudinal_ctrl_sp_pub.publish(fw_longitudinal_control_sp);
@@ -2278,6 +2355,7 @@ FixedWingModeManager::Run()
 		}
 
 		fw_entry_bridge_update(now);
+		manual_throttle_update(now);
 
 		_was_in_transition_to_fw = _vehicle_status.in_transition_to_fw;
 

@@ -184,6 +184,8 @@ static constexpr float FW_ENTRY_PITCH_ERR_DONE_DEG = 5.0f; ///< bridge may only 
 static constexpr float FW_ENTRY_SINK_ALLOW_MS = 0.3f;      ///< sink rate tolerated before the sink-rate feedback raises pitch [m/s]
 static constexpr float FW_ENTRY_CLIMB_ALLOW_MS = 1.5f;     ///< climb rate tolerated before the feedback is wound back [m/s]
 static constexpr float FW_ENTRY_PITCH_CMD_MAX_DEG = 25.0f; ///< hard limit of the bridge pitch command [deg]
+static constexpr float FW_ENTRY_POST_FADE_S = 3.0f;        ///< length of the final fade-out of the post-blend sink feedback [s]
+static constexpr float FW_MAN_THR_DEADBAND = 0.1f;         ///< throttle stick dead band around centre for the incremental throttle mode
 static constexpr float FW_ENTRY_TECS_MAX_AGE_S = 0.5f;     ///< max age of tecs_status usable for the blend [s]
 
 class FixedWingModeManager final : public ModuleBase<FixedWingModeManager>, public ModuleParams,
@@ -292,7 +294,7 @@ private:
 	 * Phase RAMP: pitch_direct/throttle_direct follow a speed-paced ramp.
 	 * Phase BLEND: command is cross-faded to TECS's own pitch/throttle.
 	 * TECS keeps running underneath (FwLateralLongitudinalControl) the whole time. */
-	enum class FwEntryPhase : uint8_t { NONE, RAMP, BLEND };
+	enum class FwEntryPhase : uint8_t { NONE, RAMP, BLEND, POST };
 	FwEntryPhase _fw_entry_phase{FwEntryPhase::NONE};
 	bool _was_in_transition_to_fw{false};
 	hrt_abstime _fw_entry_ts{0};          ///< handoff time
@@ -302,10 +304,18 @@ private:
 	float _fw_entry_speed{0.0f};          ///< ground speed at handoff [m/s]
 	float _fw_entry_pitch_cmd{0.0f};      ///< current ramp pitch command [rad]
 	float _fw_entry_sink_corr{0.0f};      ///< sink-rate feedback pitch correction, >= 0 [rad]
+	hrt_abstime _fw_entry_post_ts{0};     ///< start of the post-blend phase
 	float _fw_entry_corr_at_settle{0.0f}; ///< sink correction at the end of RAMP; only the change after it is applied in BLEND [rad]
 	float _fw_entry_pitch_out{NAN};       ///< published pitch_direct (NAN = bridge inactive) [rad]
 	float _fw_entry_thr_out{NAN};         ///< published throttle_direct (NAN = bridge inactive)
 	uORB::Subscription _tecs_status_sub{ORB_ID(tecs_status)};
+
+	/* [2026-10 custom] incremental manual throttle (speed control by thrust), see manual_throttle_update().
+	 * The throttle stick integrates into a thrust command (centre = hold, up = more, down = less). */
+	bool _manual_thr_valid{false};
+	hrt_abstime _manual_thr_last_ts{0};
+	float _manual_thr_cmd{0.f};           ///< integrated throttle command [0..1]
+	float _manual_thr_out{NAN};           ///< published throttle_direct from the manual mode (NAN = not active)
 	float _yawrate{0.0f};
 
 	float _body_acceleration_x{0.f};
@@ -675,6 +685,7 @@ private:
 	 */
 	void fw_entry_bridge_update(const hrt_abstime now);
 	void fw_entry_update_sink_corr(const float vz, const float dt);
+	void manual_throttle_update(const hrt_abstime now);
 	void control_manual_altitude(const float control_interval, const Vector2d &curr_pos, const Vector2f &ground_speed);
 
 	/**
@@ -912,6 +923,9 @@ private:
 		(ParamFloat<px4::params::FW_ENT_SPD_END>) _param_fw_ent_spd_end,
 		(ParamFloat<px4::params::FW_ENT_TIMEOUT>) _param_fw_ent_timeout,
 		(ParamFloat<px4::params::FW_ENT_BLEND>) _param_fw_ent_blend,
+		(ParamFloat<px4::params::FW_ENT_POST>) _param_fw_ent_post,
+		(ParamFloat<px4::params::FW_MAN_THR_RATE>) _param_fw_man_thr_rate,
+		(ParamFloat<px4::params::FW_MAN_THR_MIN>) _param_fw_man_thr_min,
 		(ParamFloat<px4::params::FW_ENT_SINK_KI>) _param_fw_ent_sink_ki,
 		(ParamFloat<px4::params::FW_ENT_SINK_MAX>) _param_fw_ent_sink_max,
 		(ParamFloat<px4::params::FW_THR_MIN>) _param_fw_thr_min,

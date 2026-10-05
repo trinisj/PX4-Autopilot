@@ -154,6 +154,13 @@ private:
 	uint32_t recoveryModeSignature() const;
 	bool recoveryPilotTakeover(); ///< flight mode (nav_state) changed since the recovery started, or - if VT_REC_STICK > 0 - a stick moved
 	void updateRecovery();
+	/* [2026-10 custom] wings-level monitor (fixed-wing frame bank angle about the nose) used to gate the pitch-up and the back transition */
+	void updateRollLevel(hrt_abstime now);
+	float _rec_roll{0.f};              ///< [rad] FW-frame bank angle
+	float _rec_roll_rate{0.f};         ///< [rad/s] low-pass filtered bank rate
+	hrt_abstime _rec_roll_ts{0};
+	hrt_abstime _rec_level_since{0};   ///< 0 = not level; else time since roll and roll rate are within limits
+	bool _rec_level_warned{false};
 	void setRecoveryPhase(uint8_t phase, hrt_abstime now);
 	void publishRecovery(hrt_abstime now, bool force);
 
@@ -177,7 +184,9 @@ private:
 					(ParamFloat<px4::params::VT_REC_VZ>) _param_vt_rec_vz,
 					(ParamFloat<px4::params::VT_REC_VXY>) _param_vt_rec_vxy,
 					(ParamFloat<px4::params::VT_REC_TMO>) _param_vt_rec_tmo,
-					(ParamFloat<px4::params::VT_REC_STICK>) _param_vt_rec_stick
+					(ParamFloat<px4::params::VT_REC_STICK>) _param_vt_rec_stick,
+					(ParamFloat<px4::params::VT_REC_LVL_ROLL>) _param_vt_rec_lvl_roll,
+					(ParamFloat<px4::params::VT_REC_LVL_TMO>) _param_vt_rec_lvl_tmo
 				       )
 
 

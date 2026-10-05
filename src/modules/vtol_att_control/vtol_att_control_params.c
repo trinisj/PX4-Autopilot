@@ -621,3 +621,36 @@ PARAM_DEFINE_FLOAT(VT_REC_TMO, 20.0f);
  * @group VTOL Attitude Control
  */
 PARAM_DEFINE_FLOAT(VT_REC_STICK, 0.0f);
+
+/**
+ * Recovery: maximum bank angle to start the pitch-up and the back transition
+ *
+ * The back transition rotates the vehicle to the hover attitude with wings level; with a bank (or a roll still in
+ * progress) the multicopter attitude controller has to remove it as a yaw error, which the thrust differences cannot do
+ * at speed. The automatic recovery therefore first levels the wings (PHASE_LEVEL_ROLL: roll setpoint 0, pitch held) and
+ * only starts the pitch-up once |bank| is below this value, and the back transition only when it is still below it.
+ * 0 = no roll gate (previous behaviour).
+ *
+ * @unit deg
+ * @min 0.0
+ * @max 45.0
+ * @decimal 1
+ * @increment 1.0
+ * @group VTOL Attitude Control
+ */
+PARAM_DEFINE_FLOAT(VT_REC_LVL_ROLL, 8.0f);
+
+/**
+ * Recovery: maximum time to level the wings
+ *
+ * After this time the recovery continues even if the wings are not level (a warning is logged), so a vehicle that
+ * cannot level is not held in fixed-wing flight forever.
+ *
+ * @unit s
+ * @min 1.0
+ * @max 60.0
+ * @decimal 1
+ * @increment 1.0
+ * @group VTOL Attitude Control
+ */
+PARAM_DEFINE_FLOAT(VT_REC_LVL_TMO, 12.0f);

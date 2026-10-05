@@ -82,8 +82,42 @@ void Tailsitter::publishRecovery(hrt_abstime now, bool force)
 	msg.pitch_rate = math::radians(_param_vt_rec_pit_rt.get());
 	msg.thrust_fw = math::constrain(_param_vt_rec_thr_fw.get(), 0.f, 1.f);
 	msg.thrust_mc = math::constrain(_param_vt_rec_thr_mc.get(), 0.f, 1.f);
+	msg.roll_fw = _rec_roll;
+	msg.roll_rate_fw = _rec_roll_rate;
+	msg.wings_level = (_rec_level_since != 0);
 	_recovery_pub.publish(msg);
 	_rec_pub_ts = now;
+}
+
+/* Bank angle about the nose in the fixed-wing frame. Body x (MC forward) points DOWN in fixed-wing cruise (belly), body y is the
+ * wing axis, so the bank is the angle of the wing axis out of the horizontal plane, measured around the nose:
+ * atan2(z-component of body y, z-component of body x), both in NED. 0 = wings level, +/-pi = inverted. The rate is the
+ * wrapped difference of that angle, low-pass filtered (independent of the gyro axis conventions). */
+void Tailsitter::updateRollLevel(hrt_abstime now)
+{
+	const Dcmf R{Quatf(_v_att->q)};
+	const float bank = atan2f(R(2, 1), R(2, 0));
+
+	if (_rec_roll_ts != 0) {
+		const float dt = math::constrain((now - _rec_roll_ts) * 1e-6f, 1e-4f, 0.2f);
+		const float rate = matrix::wrap_pi(bank - _rec_roll) / dt;
+		const float alpha = dt / (0.2f + dt); // tau 0.2 s
+		_rec_roll_rate += alpha * (rate - _rec_roll_rate);
+	}
+
+	_rec_roll = bank;
+	_rec_roll_ts = now;
+
+	static constexpr float RATE_LIMIT = 0.26f; // [rad/s] 15 deg/s: "no roll rotation in progress"
+	const float roll_limit = math::radians(_param_vt_rec_lvl_roll.get());
+	const bool within = (roll_limit <= 0.f) || ((fabsf(bank) < roll_limit) && (fabsf(_rec_roll_rate) < RATE_LIMIT));
+
+	if (!within) {
+		_rec_level_since = 0;
+
+	} else if (_rec_level_since == 0) {
+		_rec_level_since = now;
+	}
 }
 
 uint32_t Tailsitter::recoveryModeSignature() const
@@ -133,6 +167,8 @@ void Tailsitter::updateRecovery()
 	static constexpr hrt_abstime ATT_HOLD_MAX = 20_s;      // fallback if the climb rate never gets valid / small
 
 	const hrt_abstime now = hrt_absolute_time();
+	updateRollLevel(now);
+	const bool wings_level = (_rec_level_since != 0) && ((now - _rec_level_since) > 500_ms); // level for 0.5 s
 	const bool enabled = _param_vt_rec_en.get() > 0;
 	const bool armed = _v_control_mode->flag_armed;
 	const bool fw_requested = _attc->is_fixed_wing_requested();
@@ -171,6 +207,25 @@ void Tailsitter::updateRecovery()
 			_rec_nav_state = _rec_status_sub.copy(&status_start) ? status_start.nav_state : 0;
 			manual_control_setpoint_s manual_start{};
 			_rec_thr_ref = (_rec_manual_sub.copy(&manual_start) && manual_start.valid) ? manual_start.throttle : 0.f;
+			_rec_level_warned = false;
+			/* [2026-10 custom] wings first: with a bank, or a roll in progress, the back transition cannot be flown (the
+			 * start attitude has wings level; the MC controller would have to remove the bank as a yaw error). */
+			setRecoveryPhase(wings_level ? tailsitter_recovery_s::PHASE_PITCH_UP : tailsitter_recovery_s::PHASE_LEVEL_ROLL, now);
+		}
+
+		break;
+
+	case tailsitter_recovery_s::PHASE_LEVEL_ROLL:
+		if (_vtol_mode != vtol_mode::FW_MODE) { // something else already left fixed-wing mode
+			setRecoveryPhase(tailsitter_recovery_s::PHASE_BACK_TRANSITION, now);
+
+		} else if (wings_level) {
+			setRecoveryPhase(tailsitter_recovery_s::PHASE_PITCH_UP, now);
+
+		} else if (elapsed > _param_vt_rec_lvl_tmo.get()) {
+			PX4_WARN("recovery: wings not level after %.0f s (bank %.0f deg, rate %.0f deg/s), continuing", (double)elapsed,
+				 (double)math::degrees(_rec_roll), (double)math::degrees(_rec_roll_rate));
+			_rec_level_warned = true;
 			setRecoveryPhase(tailsitter_recovery_s::PHASE_PITCH_UP, now);
 		}
 
@@ -183,7 +238,8 @@ void Tailsitter::updateRecovery()
 			if (_vtol_mode != vtol_mode::FW_MODE) { // something else already left fixed-wing mode
 				setRecoveryPhase(tailsitter_recovery_s::PHASE_BACK_TRANSITION, now);
 
-			} else if (reached || timeout) {
+			} else if ((reached || timeout) && (wings_level || elapsed > (_param_vt_rec_tmo.get() + _param_vt_rec_lvl_tmo.get()))) {
+				/* the pitch is held at the target (roll setpoint 0) until the wings are level; bounded by VT_REC_LVL_TMO */
 				resetTransitionStates();
 				_back_trans_from_recovery = true; // start attitude = actual nose pitch, see update_transition_state()
 				_vtol_mode = vtol_mode::TRANSITION_BACK;
@@ -308,7 +364,7 @@ void Tailsitter::update_vtol_state()
 		case vtol_mode::FW_MODE:
 			/* [2026-10 custom] recovery: stay in fixed-wing mode while the pitch-up phase runs; updateRecovery() starts the
 			 * back transition when the pitch is reached */
-			if (_rec_phase == tailsitter_recovery_s::PHASE_PITCH_UP) {
+			if (_rec_phase == tailsitter_recovery_s::PHASE_PITCH_UP || _rec_phase == tailsitter_recovery_s::PHASE_LEVEL_ROLL) {
 				break;
 			}
 

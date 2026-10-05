@@ -1969,7 +1969,8 @@ FixedWingModeManager::manual_throttle_update(const hrt_abstime now)
 	_manual_thr_out = _manual_thr_cmd;
 }
 
-/* [2026-10 custom] Recovery pitch-up (first phase of the automatic recovery, see msg/TailsitterRecovery.msg).
+/* [2026-10 custom] Recovery pitch-up (first phase of the automatic recovery, see msg/TailsitterRecovery.msg). Also used for
+ * PHASE_LEVEL_ROLL (pitch held, wings leveled first) and for the hold while the back transition takes over.
  * Attitude control only: roll setpoint 0 (wings level via lateral acceleration 0), pitch ramped from the actual pitch to the
  * target at the commanded rate, thrust = thrust_fw. TECS height/speed control is bypassed (pitch_direct/throttle_direct). */
 void
@@ -2003,7 +2004,9 @@ FixedWingModeManager::control_recovery_pitch_up(const hrt_abstime now, const flo
 		.height_rate = 0.f,
 		.equivalent_airspeed = NAN,
 		.pitch_direct = _recovery_pitch_cmd,
-		.throttle_direct = _recovery.thrust_fw
+		// leveling the wings needs roll authority (differential thrust): do not drop below the cruise trim thrust in that phase
+		.throttle_direct = (_recovery.phase == tailsitter_recovery_s::PHASE_LEVEL_ROLL)
+				   ? math::max(_recovery.thrust_fw, _param_fw_thr_trim.get()) : _recovery.thrust_fw
 	};
 	publish_longitudinal_setpoint(fw_longitudinal_control_sp);
 }
@@ -2460,7 +2463,8 @@ FixedWingModeManager::Run()
 		 * really taken over (vehicle_type leaves fixed-wing / in_transition_mode). The back-transition phase starts a few
 		 * cycles before vehicle_status follows; without this hold TECS (height-rate setpoint -5 m/s while the vehicle is
 		 * climbing) commanded -30 deg in that gap (log_4_2026-10-5-20-36-48 at 86.0 s). Altitude gain is accepted. */
-		const bool recovery_hold = ((_recovery.phase == tailsitter_recovery_s::PHASE_PITCH_UP)
+		const bool recovery_hold = ((_recovery.phase == tailsitter_recovery_s::PHASE_LEVEL_ROLL)
+					    || (_recovery.phase == tailsitter_recovery_s::PHASE_PITCH_UP)
 					    || (_recovery.phase == tailsitter_recovery_s::PHASE_BACK_TRANSITION))
 					   && (hrt_elapsed_time(&_recovery.timestamp) < 1_s)
 					   && (_control_mode_current != FW_POSCTRL_MODE_OTHER)

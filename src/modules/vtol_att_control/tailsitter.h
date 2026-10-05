@@ -48,7 +48,10 @@
 #include <drivers/drv_hrt.h>
 #include <matrix/matrix/math.hpp>
 #include <uORB/Subscription.hpp>
+#include <uORB/Publication.hpp>
 #include <uORB/topics/hover_thrust_estimate.h>
+#include <uORB/topics/tailsitter_recovery.h>
+#include <uORB/topics/manual_control_setpoint.h>
 
 // [rad] Pitch threshold required for completing transition to fixed-wing in automatic transitions
 static constexpr float PITCH_THRESHOLD_AUTO_TRANSITION_TO_FW = -1.05f; // -60°
@@ -127,6 +130,24 @@ private:
 	bool frontTransitionIsFast();
 	void abortFrontTransitionToBack();
 
+	/* [2026-10 custom] Automatic recovery sequence behind ONE transition-to-MC command (VT_REC_EN):
+	 *   PITCH_UP -> BACK_TRANSITION -> ATT_HOLD -> ALT_HOLD -> POS_HOLD, see msg/TailsitterRecovery.msg.
+	 * This class owns the state machine (it knows the VTOL mode, attitude and velocity); fw_mode_manager and mc_pos_control
+	 * only execute their phases from the published tailsitter_recovery message. */
+	uORB::Publication<tailsitter_recovery_s> _recovery_pub{ORB_ID(tailsitter_recovery)};
+	uint8_t _rec_phase{tailsitter_recovery_s::PHASE_IDLE};
+	hrt_abstime _rec_phase_ts{0};      ///< start of the current phase
+	hrt_abstime _rec_pub_ts{0};        ///< last publication
+	uORB::Subscription _rec_manual_sub{ORB_ID(manual_control_setpoint)};
+	uint32_t _rec_mode_sig{0};         ///< flight-mode flags when the recovery started: a change = the pilot switched modes
+	float _rec_thr_ref{0.f};           ///< throttle stick position when the recovery started (spring-loaded or not)
+	bool _rec_cancelled{false};        ///< pilot took over: no new recovery until the next transition command / disarm
+	uint32_t recoveryModeSignature() const;
+	bool recoveryPilotTakeover(); ///< sticks moved or flight mode changed since the recovery started
+	void updateRecovery();
+	void setRecoveryPhase(uint8_t phase, hrt_abstime now);
+	void publishRecovery(hrt_abstime now, bool force);
+
 	void parameters_update() override;
 
 	bool isFrontTransitionCompletedBase() override;
@@ -138,7 +159,15 @@ private:
 					(ParamFloat<px4::params::VT_F_TR_LIFT_MIN>) _param_vt_f_tr_lift_min,
 					(ParamFloat<px4::params::MPC_THR_HOVER>) _param_mpc_thr_hover,
 					(ParamFloat<px4::params::MPC_THR_MAX>) _param_mpc_thr_max,
-					(ParamFloat<px4::params::MPC_THR_XY_MARG>) _param_mpc_thr_xy_marg
+					(ParamFloat<px4::params::MPC_THR_XY_MARG>) _param_mpc_thr_xy_marg,
+					(ParamInt<px4::params::VT_REC_EN>) _param_vt_rec_en,
+					(ParamFloat<px4::params::VT_REC_PITCH>) _param_vt_rec_pitch,
+					(ParamFloat<px4::params::VT_REC_THR_FW>) _param_vt_rec_thr_fw,
+					(ParamFloat<px4::params::VT_REC_THR_MC>) _param_vt_rec_thr_mc,
+					(ParamFloat<px4::params::VT_REC_PIT_RT>) _param_vt_rec_pit_rt,
+					(ParamFloat<px4::params::VT_REC_VZ>) _param_vt_rec_vz,
+					(ParamFloat<px4::params::VT_REC_VXY>) _param_vt_rec_vxy,
+					(ParamFloat<px4::params::VT_REC_TMO>) _param_vt_rec_tmo
 				       )
 
 

@@ -78,6 +78,7 @@
 #include <uORB/topics/position_controller_status.h>
 #include <uORB/topics/position_setpoint_triplet.h>
 #include <uORB/topics/tecs_status.h>
+#include <uORB/topics/tailsitter_recovery.h>
 #include <uORB/topics/trajectory_setpoint.h>
 #include <uORB/topics/vehicle_angular_velocity.h>
 #include <uORB/topics/vehicle_attitude.h>
@@ -309,6 +310,13 @@ private:
 	float _fw_entry_pitch_out{NAN};       ///< published pitch_direct (NAN = bridge inactive) [rad]
 	float _fw_entry_thr_out{NAN};         ///< published throttle_direct (NAN = bridge inactive)
 	uORB::Subscription _tecs_status_sub{ORB_ID(tecs_status)};
+
+	/* [2026-10 custom] Automatic recovery (PHASE_PITCH_UP of msg/TailsitterRecovery.msg, state machine in vtol_att_control):
+	 * wings level, pitch ramped up to the target, low thrust, no TECS - the "Stabilize"-like first step of the recovery. */
+	uORB::Subscription _recovery_sub{ORB_ID(tailsitter_recovery)};
+	tailsitter_recovery_s _recovery{};
+	bool _recovery_pitch_up_prev{false};
+	float _recovery_pitch_cmd{0.f};     ///< [rad] FW-frame pitch command
 
 	/* [2026-10 custom] incremental manual throttle (speed control by thrust), see manual_throttle_update().
 	 * The throttle stick integrates into a thrust command (centre = hold, up = more, down = less). */
@@ -685,6 +693,7 @@ private:
 	 */
 	void fw_entry_bridge_update(const hrt_abstime now);
 	void fw_entry_update_sink_corr(const float vz, const float dt);
+	void control_recovery_pitch_up(const hrt_abstime now, const float dt);
 	void manual_throttle_update(const hrt_abstime now);
 	void control_manual_altitude(const float control_interval, const Vector2d &curr_pos, const Vector2f &ground_speed);
 

@@ -64,6 +64,7 @@
 #include <uORB/topics/vehicle_attitude_setpoint.h>
 #include <uORB/topics/vehicle_constraints.h>
 #include <uORB/topics/vehicle_control_mode.h>
+#include <uORB/topics/tailsitter_recovery.h>
 #include <uORB/topics/vehicle_land_detected.h>
 #include <uORB/topics/vehicle_local_position.h>
 #include <uORB/topics/vehicle_local_position_setpoint.h>
@@ -108,6 +109,17 @@ private:
 	uORB::Subscription _vehicle_constraints_sub{ORB_ID(vehicle_constraints)};
 	uORB::Subscription _vehicle_control_mode_sub{ORB_ID(vehicle_control_mode)};
 	uORB::Subscription _vehicle_land_detected_sub{ORB_ID(vehicle_land_detected)};
+
+	/* [2026-10 custom] Tailsitter automatic recovery (msg/TailsitterRecovery.msg, state machine in vtol_att_control):
+	 * PHASE_BACK_TRANSITION / PHASE_ATT_HOLD: level attitude + thrust_mc, no altitude / position control (Stabilize-like),
+	 * PHASE_ALT_HOLD: altitude controller only (Altitude-like), PHASE_POS_HOLD: position hold (Position-like). */
+	uORB::Subscription _recovery_sub{ORB_ID(tailsitter_recovery)};
+	tailsitter_recovery_s _recovery{};
+	uint8_t _rec_phase_prev{tailsitter_recovery_s::PHASE_IDLE};
+	float _rec_yaw{NAN};                        ///< heading held during the recovery
+	matrix::Vector3f _rec_pos{NAN, NAN, NAN};  ///< latched hold position (NED)
+	bool _rec_z_latched{false};
+	bool _rec_xy_latched{false};
 
 	hrt_abstime _time_stamp_last_loop{0};		/**< time stamp of last loop iteration */
 	hrt_abstime _time_position_control_enabled{0};

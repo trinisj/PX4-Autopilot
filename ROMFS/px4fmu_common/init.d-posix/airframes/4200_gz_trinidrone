@@ -103,9 +103,3 @@ param set-default VT_FW_MIN_ALT 20
 param set-default FW_USE_AIRSPD 0
 param set-default FW_PSP_OFF 12
 
-#---------------------------------------------------------------
-# [2026-09-15][trinidrone] guidance
-#   The module itself does nothing until KD_G_EN is non zero,
-#   so starting it unconditionally is safe.
-#---------------------------------------------------------------
-kd_guidance start

@@ -446,6 +446,77 @@ void MulticopterPositionControl::Run()
 
 		adjustSetpointForEKFResets(vehicle_local_position, _setpoint);
 
+		/* [2026-10 custom] automatic recovery override, see tailsitter_recovery.msg */
+		_recovery_sub.update(&_recovery);
+		const bool rec_valid = hrt_elapsed_time(&_recovery.timestamp) < 1_s;
+		const uint8_t rec_phase = (rec_valid && _vehicle_control_mode.flag_multicopter_position_control_enabled)
+				    ? _recovery.phase : tailsitter_recovery_s::PHASE_IDLE;
+		const bool rec_att = (rec_phase == tailsitter_recovery_s::PHASE_BACK_TRANSITION)
+				     || (rec_phase == tailsitter_recovery_s::PHASE_ATT_HOLD);
+
+		if (rec_phase != _rec_phase_prev) {
+			if (rec_phase == tailsitter_recovery_s::PHASE_ATT_HOLD || rec_phase == tailsitter_recovery_s::PHASE_BACK_TRANSITION) {
+				_rec_yaw = PX4_ISFINITE(states.yaw) ? states.yaw : NAN; // latched again when the level attitude is reached below
+			}
+
+			if (rec_phase == tailsitter_recovery_s::PHASE_ALT_HOLD) {
+				_rec_yaw = PX4_ISFINITE(states.yaw) ? states.yaw : _rec_yaw;
+				_rec_z_latched = false;
+				_rec_xy_latched = false;
+				_rec_pos = matrix::Vector3f(NAN, NAN, NAN);
+			}
+
+			if (rec_phase == tailsitter_recovery_s::PHASE_IDLE) {
+				_rec_z_latched = false;
+				_rec_xy_latched = false;
+				_rec_pos = matrix::Vector3f(NAN, NAN, NAN);
+				_rec_yaw = NAN;
+			}
+
+			_rec_phase_prev = rec_phase;
+		}
+
+		if (rec_phase == tailsitter_recovery_s::PHASE_ALT_HOLD || rec_phase == tailsitter_recovery_s::PHASE_POS_HOLD) {
+			trajectory_setpoint_s rec_sp = PositionControl::empty_trajectory_setpoint;
+			rec_sp.timestamp = vehicle_local_position.timestamp_sample;
+			rec_sp.yaw = _rec_yaw; // NAN = keep the current yaw
+
+			// altitude: vertical velocity control to zero, position hold at the altitude where the climb has stopped
+			rec_sp.velocity[2] = 0.f;
+
+			if (!_rec_z_latched && PX4_ISFINITE(states.position(2)) && PX4_ISFINITE(states.velocity(2))
+			    && fabsf(states.velocity(2)) < 0.5f) {
+				_rec_pos(2) = states.position(2);
+				_rec_z_latched = true;
+			}
+
+			if (_rec_z_latched) {
+				rec_sp.position[2] = _rec_pos(2);
+			}
+
+			if (rec_phase == tailsitter_recovery_s::PHASE_POS_HOLD && !_rec_xy_latched
+			    && PX4_ISFINITE(states.position(0)) && PX4_ISFINITE(states.position(1))) {
+				_rec_pos(0) = states.position(0);
+				_rec_pos(1) = states.position(1);
+				_rec_xy_latched = true;
+			}
+
+			if (rec_phase == tailsitter_recovery_s::PHASE_POS_HOLD && _rec_xy_latched) {
+				// position hold (horizontal velocity controlled)
+				rec_sp.position[0] = _rec_pos(0);
+				rec_sp.position[1] = _rec_pos(1);
+				rec_sp.velocity[0] = 0.f;
+				rec_sp.velocity[1] = 0.f;
+
+			} else {
+				// altitude only: no horizontal control, level attitude
+				rec_sp.acceleration[0] = 0.f;
+				rec_sp.acceleration[1] = 0.f;
+			}
+
+			_setpoint = rec_sp;
+		}
+
 		if (_vehicle_control_mode.flag_multicopter_position_control_enabled) {
 			// set failsafe setpoint if there hasn't been a new
 			// trajectory setpoint since position control started
@@ -456,8 +527,40 @@ void MulticopterPositionControl::Run()
 			}
 		}
 
-		if (_vehicle_control_mode.flag_multicopter_position_control_enabled
-		    && (_setpoint.timestamp >= _time_position_control_enabled)) {
+		if (rec_att) {
+			// Stabilize-like recovery phases: level attitude and low thrust, no altitude / position control.
+			// During PHASE_BACK_TRANSITION vtol_att_control takes the attitude from its own transition ramp and only the thrust from here.
+			const float rec_yaw = PX4_ISFINITE(_rec_yaw) ? _rec_yaw : states.yaw;
+			const float rec_thrust = math::constrain(_recovery.thrust_mc, 0.f, 1.f);
+
+			vehicle_attitude_setpoint_s rec_att_sp{};
+			rec_att_sp.timestamp = hrt_absolute_time();
+			matrix::Quatf(matrix::Eulerf(0.f, 0.f, PX4_ISFINITE(rec_yaw) ? rec_yaw : 0.f)).copyTo(rec_att_sp.q_d);
+			rec_att_sp.yaw_sp_move_rate = 0.f;
+			rec_att_sp.thrust_body[0] = 0.f;
+			rec_att_sp.thrust_body[1] = 0.f;
+			rec_att_sp.thrust_body[2] = -rec_thrust;
+			_vehicle_attitude_setpoint_pub.publish(rec_att_sp);
+
+			// intention for the land detector: thrust only, no position / velocity setpoints
+			vehicle_local_position_setpoint_s rec_local_sp{};
+			rec_local_sp.timestamp = hrt_absolute_time();
+			rec_local_sp.x = rec_local_sp.y = rec_local_sp.z = NAN;
+			rec_local_sp.vx = rec_local_sp.vy = rec_local_sp.vz = NAN;
+			rec_local_sp.yaw = PX4_ISFINITE(rec_yaw) ? rec_yaw : NAN;
+			rec_local_sp.yawspeed = NAN;
+			rec_local_sp.acceleration[0] = rec_local_sp.acceleration[1] = rec_local_sp.acceleration[2] = NAN;
+			rec_local_sp.thrust[0] = 0.f;
+			rec_local_sp.thrust[1] = 0.f;
+			rec_local_sp.thrust[2] = -rec_thrust;
+			_local_pos_sp_pub.publish(rec_local_sp);
+
+			_takeoff.updateTakeoffState(_vehicle_control_mode.flag_armed, _vehicle_land_detected.landed, false, 10.f, true,
+						    vehicle_local_position.timestamp_sample);
+			_control.resetIntegral();
+
+		} else if (_vehicle_control_mode.flag_multicopter_position_control_enabled
+			   && (_setpoint.timestamp >= _time_position_control_enabled)) {
 
 			// update vehicle constraints and handle smooth takeoff
 			_vehicle_constraints_sub.update(&_vehicle_constraints);

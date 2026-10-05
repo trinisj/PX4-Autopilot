@@ -1946,6 +1946,39 @@ FixedWingModeManager::manual_throttle_update(const hrt_abstime now)
 	_manual_thr_out = _manual_thr_cmd;
 }
 
+/* [2026-10 custom] Recovery pitch-up (first phase of the automatic recovery, see msg/TailsitterRecovery.msg).
+ * Attitude control only: roll setpoint 0 (wings level via lateral acceleration 0), pitch ramped from the actual pitch to the
+ * target at the commanded rate, thrust = thrust_fw. TECS height/speed control is bypassed (pitch_direct/throttle_direct). */
+void
+FixedWingModeManager::control_recovery_pitch_up(const hrt_abstime now, const float dt)
+{
+	static constexpr float MAX_LEAD = 0.175f; // [rad] 10 deg: never command more than this above the actual pitch (authority limit)
+
+	if (!_recovery_pitch_up_prev) {
+		_recovery_pitch_cmd = _pitch;
+		_recovery_pitch_up_prev = true;
+	}
+
+	_recovery_pitch_cmd += _recovery.pitch_rate * dt;
+	_recovery_pitch_cmd = math::min(_recovery_pitch_cmd, _recovery.pitch_target);
+	_recovery_pitch_cmd = math::min(_recovery_pitch_cmd, _pitch + MAX_LEAD);
+
+	fixed_wing_lateral_setpoint_s fw_lateral_ctrl_sp{empty_lateral_control_setpoint};
+	fw_lateral_ctrl_sp.timestamp = now;
+	fw_lateral_ctrl_sp.lateral_acceleration = 0.f; // wings level
+	_lateral_ctrl_sp_pub.publish(fw_lateral_ctrl_sp);
+
+	const fixed_wing_longitudinal_setpoint_s fw_longitudinal_control_sp = {
+		.timestamp = now,
+		.altitude = NAN,
+		.height_rate = 0.f,
+		.equivalent_airspeed = NAN,
+		.pitch_direct = _recovery_pitch_cmd,
+		.throttle_direct = _recovery.thrust_fw
+	};
+	_longitudinal_ctrl_sp_pub.publish(fw_longitudinal_control_sp);
+}
+
 void
 FixedWingModeManager::control_manual_altitude(const float control_interval, const Vector2d &curr_pos,
 		const Vector2f &ground_speed)
@@ -2393,7 +2426,21 @@ FixedWingModeManager::Run()
 		int8_t old_landing_gear_position = _new_landing_gear_position;
 		_new_landing_gear_position = landing_gear_s::GEAR_KEEP; // is overwritten in Takeoff and Land
 
-		switch (_control_mode_current) {
+		_recovery_sub.update(&_recovery);
+		const bool recovery_pitch_up = (_recovery.phase == tailsitter_recovery_s::PHASE_PITCH_UP)
+					       && (hrt_elapsed_time(&_recovery.timestamp) < 1_s)
+					       && (_control_mode_current != FW_POSCTRL_MODE_OTHER)
+					       && (_vehicle_status.vehicle_type == vehicle_status_s::VEHICLE_TYPE_FIXED_WING)
+					       && !_vehicle_status.in_transition_mode;
+
+		if (!recovery_pitch_up) {
+			_recovery_pitch_up_prev = false;
+		}
+
+		if (recovery_pitch_up) {
+			control_recovery_pitch_up(now, control_interval);
+
+		} else switch (_control_mode_current) {
 		case FW_POSCTRL_MODE_AUTO: {
 				control_auto(control_interval, curr_pos, ground_speed, _pos_sp_triplet.previous, _pos_sp_triplet.current,
 					     _pos_sp_triplet.next);

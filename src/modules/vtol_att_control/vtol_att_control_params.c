@@ -498,3 +498,109 @@ PARAM_DEFINE_FLOAT(VT_LND_PITCH_MIN, -5.0f);
  * @group VTOL Attitude Control
  */
 PARAM_DEFINE_FLOAT(VT_SPOILER_MC_LD, 0.f);
+
+/**
+ * Tailsitter automatic recovery enable
+ *
+ * 1 = a transition-to-MC command given in fixed-wing flight starts the automatic recovery sequence instead of the plain
+ * back transition: (1) pitch up with wings level and low thrust (VT_REC_PITCH, VT_REC_THR_FW), (2) back transition,
+ * (3) multicopter attitude-only hold with low thrust (VT_REC_THR_MC), (4) altitude hold once the climb rate is below
+ * VT_REC_VZ, (5) position hold once the horizontal speed is below VT_REC_VXY. Uses fw_mode_manager and mc_pos_control
+ * in the nav states that run them (auto modes, Altitude, Position); in Stabilized (manual attitude) mode only the
+ * trigger of the back transition (pitch reached) is automated.
+ *
+ * @boolean
+ * @group VTOL Attitude Control
+ */
+PARAM_DEFINE_INT32(VT_REC_EN, 0);
+
+/**
+ * Recovery: fixed-wing pitch at which the back transition starts
+ *
+ * Nose angle above the horizon.
+ *
+ * @unit deg
+ * @min 10.0
+ * @max 60.0
+ * @decimal 1
+ * @increment 1.0
+ * @group VTOL Attitude Control
+ */
+PARAM_DEFINE_FLOAT(VT_REC_PITCH, 35.0f);
+
+/**
+ * Recovery: thrust during the fixed-wing pitch-up
+ *
+ * Differential-thrust attitude control needs thrust headroom, so do not set this below what keeps the lowest motor
+ * above about 0.2.
+ *
+ * @min 0.2
+ * @max 0.8
+ * @decimal 2
+ * @increment 0.05
+ * @group VTOL Attitude Control
+ */
+PARAM_DEFINE_FLOAT(VT_REC_THR_FW, 0.45f);
+
+/**
+ * Recovery: thrust during the back transition and the multicopter attitude-only hold
+ *
+ * Below hover thrust so that the remaining climb is decelerated while the attitude is kept.
+ *
+ * @min 0.2
+ * @max 0.7
+ * @decimal 2
+ * @increment 0.05
+ * @group VTOL Attitude Control
+ */
+PARAM_DEFINE_FLOAT(VT_REC_THR_MC, 0.40f);
+
+/**
+ * Recovery: pitch-up rate
+ *
+ * @unit deg/s
+ * @min 2.0
+ * @max 60.0
+ * @decimal 1
+ * @increment 1.0
+ * @group VTOL Attitude Control
+ */
+PARAM_DEFINE_FLOAT(VT_REC_PIT_RT, 6.0f);
+
+/**
+ * Recovery: climb rate below which the altitude hold starts
+ *
+ * @unit m/s
+ * @min 0.5
+ * @max 10.0
+ * @decimal 1
+ * @increment 0.5
+ * @group VTOL Attitude Control
+ */
+PARAM_DEFINE_FLOAT(VT_REC_VZ, 3.0f);
+
+/**
+ * Recovery: horizontal speed below which the position hold starts
+ *
+ * @unit m/s
+ * @min 0.5
+ * @max 20.0
+ * @decimal 1
+ * @increment 0.5
+ * @group VTOL Attitude Control
+ */
+PARAM_DEFINE_FLOAT(VT_REC_VXY, 5.0f);
+
+/**
+ * Recovery: maximum duration of the fixed-wing pitch-up
+ *
+ * The back transition is started anyway after this time.
+ *
+ * @unit s
+ * @min 3.0
+ * @max 60.0
+ * @decimal 1
+ * @increment 1.0
+ * @group VTOL Attitude Control
+ */
+PARAM_DEFINE_FLOAT(VT_REC_TMO, 20.0f);

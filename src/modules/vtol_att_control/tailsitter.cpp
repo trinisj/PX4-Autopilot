@@ -56,8 +56,175 @@ Tailsitter::parameters_update()
 
 }
 
+/* [2026-10 custom] Recovery state machine, see msg/TailsitterRecovery.msg and the VT_REC_* parameters.
+ * Modelled on the manual sequence flown in log_0_2026-10-5-19-15-29: Stabilize pitch-up at minimum thrust, transition at
+ * a nose angle of 30-40 deg, Stabilize (attitude only) at low thrust until level, Altitude controller once the climb
+ * rate is below 3 m/s, Position controller once the horizontal speed is below 5 m/s. */
+void Tailsitter::setRecoveryPhase(uint8_t phase, hrt_abstime now)
+{
+	if (phase != _rec_phase) {
+		_rec_phase = phase;
+		_rec_phase_ts = now;
+		publishRecovery(now, true);
+	}
+}
+
+void Tailsitter::publishRecovery(hrt_abstime now, bool force)
+{
+	if (!force && (now - _rec_pub_ts) < 100_ms) {
+		return;
+	}
+
+	tailsitter_recovery_s msg{};
+	msg.timestamp = now;
+	msg.phase = _rec_phase;
+	msg.pitch_target = math::radians(_param_vt_rec_pitch.get());
+	msg.pitch_rate = math::radians(_param_vt_rec_pit_rt.get());
+	msg.thrust_fw = math::constrain(_param_vt_rec_thr_fw.get(), 0.f, 1.f);
+	msg.thrust_mc = math::constrain(_param_vt_rec_thr_mc.get(), 0.f, 1.f);
+	_recovery_pub.publish(msg);
+	_rec_pub_ts = now;
+}
+
+uint32_t Tailsitter::recoveryModeSignature() const
+{
+	return (_v_control_mode->flag_control_manual_enabled ? 1u : 0u)
+	       | (_v_control_mode->flag_control_auto_enabled ? 2u : 0u)
+	       | (_v_control_mode->flag_control_position_enabled ? 4u : 0u)
+	       | (_v_control_mode->flag_control_altitude_enabled ? 8u : 0u)
+	       | (_v_control_mode->flag_control_climb_rate_enabled ? 16u : 0u)
+	       | (_v_control_mode->flag_control_attitude_enabled ? 32u : 0u);
+}
+
+/* Pilot takeover: any stick beyond 20 % (throttle: away from the position it had when the recovery started) or a change of the flight-mode flags cancels the
+ * automatic recovery. log_1_2026-10-5-20-03-05: the recovery stayed in POS_HOLD until disarm and overrode the setpoints, no
+ * stick and no flight-mode switch reached the vehicle for 60 s. */
+bool Tailsitter::recoveryPilotTakeover()
+{
+	static constexpr float STICK_TAKEOVER = 0.20f;
+
+	if (recoveryModeSignature() != _rec_mode_sig) {
+		return true;
+	}
+
+	manual_control_setpoint_s manual{};
+
+	if (_rec_manual_sub.copy(&manual) && manual.valid && (hrt_elapsed_time(&manual.timestamp) < 500_ms)) {
+		return (fabsf(manual.roll) > STICK_TAKEOVER) || (fabsf(manual.pitch) > STICK_TAKEOVER)
+		       || (fabsf(manual.yaw) > STICK_TAKEOVER) || (fabsf(manual.throttle - _rec_thr_ref) > STICK_TAKEOVER);
+	}
+
+	return false;
+}
+
+void Tailsitter::updateRecovery()
+{
+	static constexpr float PITCH_REACHED_TOL = 0.052f;     // [rad] 3 deg: manual modes clamp the pitch setpoint to FW_P_LIM_MAX, the vehicle then settles ~1.5 deg above/below it
+	static constexpr float LEVEL_TOL = 0.35f;              // [rad] 20 deg: "multicopter level attitude reached"
+	static constexpr hrt_abstime ATT_HOLD_MAX = 20_s;      // fallback if the climb rate never gets valid / small
+
+	const hrt_abstime now = hrt_absolute_time();
+	const bool enabled = _param_vt_rec_en.get() > 0;
+	const bool armed = _v_control_mode->flag_armed;
+	const bool fw_requested = _attc->is_fixed_wing_requested();
+	const bool quad_chute = _vtol_vehicle_status->fixed_wing_system_failure;
+
+	if (!enabled || !armed || fw_requested || quad_chute) {
+		_rec_cancelled = false; // a new command / disarm re-arms the automatic recovery
+		setRecoveryPhase(tailsitter_recovery_s::PHASE_IDLE, now);
+		publishRecovery(now, false);
+		return;
+	}
+
+	if (_rec_cancelled) { // pilot took over earlier: stock behaviour, nothing is overridden
+		publishRecovery(now, false);
+		return;
+	}
+
+	if (_rec_phase != tailsitter_recovery_s::PHASE_IDLE && recoveryPilotTakeover()) {
+		_rec_cancelled = true;
+		setRecoveryPhase(tailsitter_recovery_s::PHASE_IDLE, now);
+		publishRecovery(now, true);
+		return;
+	}
+
+	// MC-frame pitch theta is -90 deg in fixed-wing cruise; nose above horizon = theta + 90 deg
+	const float theta = Eulerf(Quatf(_v_att->q)).theta();
+	const float pitch_fw = theta + M_PI_2_F;
+	const float elapsed = (now - _rec_phase_ts) * 1e-6f;
+
+	switch (_rec_phase) {
+	case tailsitter_recovery_s::PHASE_IDLE:
+		if (_vtol_mode == vtol_mode::FW_MODE) { // transition-to-MC command in fixed-wing flight
+			_rec_mode_sig = recoveryModeSignature();
+			manual_control_setpoint_s manual_start{};
+			_rec_thr_ref = (_rec_manual_sub.copy(&manual_start) && manual_start.valid) ? manual_start.throttle : 0.f;
+			setRecoveryPhase(tailsitter_recovery_s::PHASE_PITCH_UP, now);
+		}
+
+		break;
+
+	case tailsitter_recovery_s::PHASE_PITCH_UP: {
+			const bool reached = pitch_fw >= math::radians(_param_vt_rec_pitch.get()) - PITCH_REACHED_TOL;
+			const bool timeout = elapsed > _param_vt_rec_tmo.get();
+
+			if (_vtol_mode != vtol_mode::FW_MODE) { // something else already left fixed-wing mode
+				setRecoveryPhase(tailsitter_recovery_s::PHASE_BACK_TRANSITION, now);
+
+			} else if (reached || timeout) {
+				resetTransitionStates();
+				_vtol_mode = vtol_mode::TRANSITION_BACK;
+				setRecoveryPhase(tailsitter_recovery_s::PHASE_BACK_TRANSITION, now);
+			}
+
+			break;
+		}
+
+	case tailsitter_recovery_s::PHASE_BACK_TRANSITION:
+		if (_vtol_mode == vtol_mode::MC_MODE) {
+			setRecoveryPhase(tailsitter_recovery_s::PHASE_ATT_HOLD, now);
+
+		} else if (_vtol_mode == vtol_mode::FW_MODE) { // transition was aborted by someone else
+			setRecoveryPhase(tailsitter_recovery_s::PHASE_IDLE, now);
+		}
+
+		break;
+
+	case tailsitter_recovery_s::PHASE_ATT_HOLD: {
+			const bool vz_ok = _local_pos->v_z_valid && PX4_ISFINITE(_local_pos->vz)
+					   && (_local_pos->vz > -_param_vt_rec_vz.get()); // NED: climbing = negative
+			const bool level = fabsf(theta) < LEVEL_TOL;
+
+			if ((vz_ok && level) || (now - _rec_phase_ts) > ATT_HOLD_MAX) {
+				setRecoveryPhase(tailsitter_recovery_s::PHASE_ALT_HOLD, now);
+			}
+
+			break;
+		}
+
+	case tailsitter_recovery_s::PHASE_ALT_HOLD: {
+			const bool vxy_ok = _local_pos->v_xy_valid && PX4_ISFINITE(_local_pos->vx) && PX4_ISFINITE(_local_pos->vy)
+					    && (Vector2f(_local_pos->vx, _local_pos->vy).norm() < _param_vt_rec_vxy.get());
+
+			if (vxy_ok) {
+				setRecoveryPhase(tailsitter_recovery_s::PHASE_POS_HOLD, now);
+			}
+
+			break;
+		}
+
+	case tailsitter_recovery_s::PHASE_POS_HOLD: // stays until the pilot takes over, disarm or a new transition to fixed-wing
+	default:
+		break;
+	}
+
+	publishRecovery(now, false);
+}
+
 void Tailsitter::update_vtol_state()
 {
+	updateRecovery(); // [2026-10 custom] may start the pitch-up phase or the back transition itself
+
 	/* simple logic using a two way switch to perform transitions.
 	 * after flipping the switch the vehicle will start tilting in MC control mode, picking up
 	 * forward speed. After the vehicle has picked up enough and sufficient pitch angle the uav will go into FW mode.
@@ -126,6 +293,12 @@ void Tailsitter::update_vtol_state()
 			break;
 
 		case vtol_mode::FW_MODE:
+			/* [2026-10 custom] recovery: stay in fixed-wing mode while the pitch-up phase runs; updateRecovery() starts the
+			 * back transition when the pitch is reached */
+			if (_rec_phase == tailsitter_recovery_s::PHASE_PITCH_UP) {
+				break;
+			}
+
 			resetTransitionStates();
 			_vtol_mode = vtol_mode::TRANSITION_BACK;
 			break;

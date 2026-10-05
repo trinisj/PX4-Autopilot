@@ -210,6 +210,7 @@ set(msg_files
 	SensorUwb.msg
 	SensorAirflow.msg
 	SystemPower.msg
+	TailsitterRecovery.msg
 	TakeoffStatus.msg
 	TaskStackInfo.msg
 	TecsStatus.msg

@@ -760,3 +760,19 @@ PARAM_DEFINE_FLOAT(FW_MAN_THR_RATE, 0.0f);
  * @group FW Mode Manager
  */
 PARAM_DEFINE_FLOAT(FW_MAN_THR_MIN, 0.3f);
+
+/**
+ * FW entry bridge: thrust
+ *
+ * Thrust commanded during the entry ramp (after the VTOL front transition)
+ * until the blend into TECS starts. Independent of FW_THR_TRIM, which sets
+ * the cruise speed without an airspeed sensor: a low cruise trim must not
+ * slow down the acceleration to FW_ENT_SPD_END.
+ *
+ * @min 0
+ * @max 1
+ * @decimal 2
+ * @increment 0.05
+ * @group FW Mode Manager
+ */
+PARAM_DEFINE_FLOAT(FW_ENT_THR, 0.6f);

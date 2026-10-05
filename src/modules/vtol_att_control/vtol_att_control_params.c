@@ -443,7 +443,7 @@ PARAM_DEFINE_FLOAT(VT_FW_DIFTHR_S_P, 1.f);
  * @increment 0.1
  * @group VTOL Attitude Control
  */
-PARAM_DEFINE_FLOAT(VT_FW_DIFTHR_S_Y, 1.f);
+PARAM_DEFINE_FLOAT(VT_FW_DIFTHR_S_Y, 1.0f);
 
 /**
  * Backtransition deceleration setpoint to pitch I gain.

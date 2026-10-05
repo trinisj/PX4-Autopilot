@@ -1794,7 +1794,8 @@ FixedWingModeManager::fw_entry_bridge_update(const hrt_abstime now)
 	const float elapsed = hrt_elapsed_time(&_fw_entry_ts) * 1e-6f;
 	const float vz = (_local_pos.v_z_valid && PX4_ISFINITE(_local_pos.vz)) ? _local_pos.vz : 0.f; // NED, + = sinking
 	const float gs = Vector2f(_local_pos.vx, _local_pos.vy).norm();
-	const float thr_trim = _param_fw_thr_trim.get();
+	// [2026-10 custom] bridge thrust is its own parameter: lowering FW_THR_TRIM (slower cruise) must not slow the acceleration of the entry
+	const float thr_trim = math::constrain(_param_fw_ent_thr.get(), 0.f, _param_fw_thr_max.get());
 
 	if (_fw_entry_phase == FwEntryPhase::RAMP) {
 		const float dt = math::constrain((now - _fw_entry_last_ts) * 1e-6f, 0.f, 0.1f);

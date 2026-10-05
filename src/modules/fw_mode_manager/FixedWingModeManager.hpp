@@ -924,6 +924,7 @@ private:
 		(ParamFloat<px4::params::FW_ENT_TIMEOUT>) _param_fw_ent_timeout,
 		(ParamFloat<px4::params::FW_ENT_BLEND>) _param_fw_ent_blend,
 		(ParamFloat<px4::params::FW_ENT_POST>) _param_fw_ent_post,
+		(ParamFloat<px4::params::FW_ENT_THR>) _param_fw_ent_thr,
 		(ParamFloat<px4::params::FW_MAN_THR_RATE>) _param_fw_man_thr_rate,
 		(ParamFloat<px4::params::FW_MAN_THR_MIN>) _param_fw_man_thr_min,
 		(ParamFloat<px4::params::FW_ENT_SINK_KI>) _param_fw_ent_sink_ki,

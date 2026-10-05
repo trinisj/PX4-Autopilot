@@ -52,6 +52,7 @@
 #include <uORB/topics/hover_thrust_estimate.h>
 #include <uORB/topics/tailsitter_recovery.h>
 #include <uORB/topics/manual_control_setpoint.h>
+#include <uORB/topics/vehicle_status.h>
 
 // [rad] Pitch threshold required for completing transition to fixed-wing in automatic transitions
 static constexpr float PITCH_THRESHOLD_AUTO_TRANSITION_TO_FW = -1.05f; // -60°
@@ -127,6 +128,12 @@ private:
 	 * (nose near horizontal): go through the ramped back transition instead
 	 * of switching to MC instantly. See abortFrontTransitionToBack(). */
 	bool _back_trans_from_front{false};
+	/* [2026-10 custom] Back transition started by the automatic recovery: start from the ACTUAL nose pitch, never from
+	 * fw_virtual_attitude_setpoint. log_4_2026-10-5-20-36-48 / log_1_2026-10-5-20-38-39: when the pitch-up phase ended the FW
+	 * controller fell back to TECS, which (climbing at 32 m/s, height-rate setpoint -5 m/s) commanded its lower pitch limit
+	 * -30 deg; the back transition adopted that as its start attitude (nose-up 32 deg -> nose-down 30 deg step), dived to
+	 * 125 m/s and hit the minimum-altitude quad-chute. */
+	bool _back_trans_from_recovery{false};
 	bool frontTransitionIsFast();
 	void abortFrontTransitionToBack();
 
@@ -140,10 +147,12 @@ private:
 	hrt_abstime _rec_pub_ts{0};        ///< last publication
 	uORB::Subscription _rec_manual_sub{ORB_ID(manual_control_setpoint)};
 	uint32_t _rec_mode_sig{0};         ///< flight-mode flags when the recovery started: a change = the pilot switched modes
+	uORB::Subscription _rec_status_sub{ORB_ID(vehicle_status)};
+	uint8_t _rec_nav_state{0};         ///< nav_state when the recovery started: a change (RC switch, GCS command, failsafe) = takeover
 	float _rec_thr_ref{0.f};           ///< throttle stick position when the recovery started (spring-loaded or not)
 	bool _rec_cancelled{false};        ///< pilot took over: no new recovery until the next transition command / disarm
 	uint32_t recoveryModeSignature() const;
-	bool recoveryPilotTakeover(); ///< sticks moved or flight mode changed since the recovery started
+	bool recoveryPilotTakeover(); ///< flight mode (nav_state) changed since the recovery started, or - if VT_REC_STICK > 0 - a stick moved
 	void updateRecovery();
 	void setRecoveryPhase(uint8_t phase, hrt_abstime now);
 	void publishRecovery(hrt_abstime now, bool force);
@@ -167,7 +176,8 @@ private:
 					(ParamFloat<px4::params::VT_REC_PIT_RT>) _param_vt_rec_pit_rt,
 					(ParamFloat<px4::params::VT_REC_VZ>) _param_vt_rec_vz,
 					(ParamFloat<px4::params::VT_REC_VXY>) _param_vt_rec_vxy,
-					(ParamFloat<px4::params::VT_REC_TMO>) _param_vt_rec_tmo
+					(ParamFloat<px4::params::VT_REC_TMO>) _param_vt_rec_tmo,
+					(ParamFloat<px4::params::VT_REC_STICK>) _param_vt_rec_stick
 				       )
 
 

@@ -614,7 +614,7 @@ void FixedWingModeManager::control_idle()
 	long_contrl_sp.timestamp = now;
 	long_contrl_sp.pitch_direct = 0.f;
 	long_contrl_sp.throttle_direct = 0.0f;
-	_longitudinal_ctrl_sp_pub.publish(long_contrl_sp);
+	publish_longitudinal_setpoint(long_contrl_sp);
 
 	_ctrl_configuration_handler.setThrottleMax(0.0f);
 	_ctrl_configuration_handler.setThrottleMin(0.0f);
@@ -633,7 +633,7 @@ FixedWingModeManager::control_auto_fixed_bank_alt_hold()
 		.throttle_direct = NAN
 	};
 
-	_longitudinal_ctrl_sp_pub.publish(fw_longitudinal_control_sp);
+	publish_longitudinal_setpoint(fw_longitudinal_control_sp);
 
 	float throttle_max = _param_fw_thr_max.get();
 
@@ -670,7 +670,7 @@ FixedWingModeManager::control_auto_descend()
 		.throttle_direct = NAN
 	};
 
-	_longitudinal_ctrl_sp_pub.publish(fw_longitudinal_control_sp);
+	publish_longitudinal_setpoint(fw_longitudinal_control_sp);
 
 	_ctrl_configuration_handler.setThrottleMax((_landed
 			|| !_local_pos.v_z_valid) ? _param_fw_thr_min.get() : _param_fw_thr_max.get());
@@ -784,7 +784,7 @@ FixedWingModeManager::control_auto_position(const float control_interval, const 
 		.throttle_direct = NAN
 	};
 
-	_longitudinal_ctrl_sp_pub.publish(fw_longitudinal_control_sp);
+	publish_longitudinal_setpoint(fw_longitudinal_control_sp);
 
 	float throttle_min = NAN;
 	float throttle_max = NAN;
@@ -847,7 +847,7 @@ FixedWingModeManager::control_auto_velocity(const float control_interval, const 
 		.throttle_direct = NAN
 	};
 
-	_longitudinal_ctrl_sp_pub.publish(fw_longitudinal_control_sp);
+	publish_longitudinal_setpoint(fw_longitudinal_control_sp);
 
 	if (pos_sp_curr.gliding_enabled) {
 		_ctrl_configuration_handler.setThrottleMin(0.0f);
@@ -941,7 +941,7 @@ FixedWingModeManager::control_auto_loiter(const float control_interval, const Ve
 		.throttle_direct = NAN
 	};
 
-	_longitudinal_ctrl_sp_pub.publish(fw_longitudinal_control_sp);
+	publish_longitudinal_setpoint(fw_longitudinal_control_sp);
 
 	if (pos_sp_curr.gliding_enabled) {
 		_ctrl_configuration_handler.setThrottleMin(0.0f);
@@ -989,7 +989,7 @@ FixedWingModeManager::controlAutoFigureEight(const float control_interval, const
 		.throttle_direct = NAN
 	};
 
-	_longitudinal_ctrl_sp_pub.publish(fw_longitudinal_control_sp);
+	publish_longitudinal_setpoint(fw_longitudinal_control_sp);
 
 	if (pos_sp_curr.gliding_enabled) {
 		_ctrl_configuration_handler.setThrottleMin(0.0f);
@@ -1046,7 +1046,7 @@ FixedWingModeManager::control_auto_path(const float control_interval, const Vect
 		.throttle_direct = NAN
 	};
 
-	_longitudinal_ctrl_sp_pub.publish(fw_longitudinal_control_sp);
+	publish_longitudinal_setpoint(fw_longitudinal_control_sp);
 
 	if (pos_sp_curr.gliding_enabled) {
 		_ctrl_configuration_handler.setThrottleMin(0.0f);
@@ -1135,7 +1135,7 @@ FixedWingModeManager::control_auto_takeoff(const hrt_abstime &now, const float c
 			.throttle_direct = _runway_takeoff.getThrottle(_param_fw_thr_idle.get())
 		};
 
-		_longitudinal_ctrl_sp_pub.publish(fw_longitudinal_control_sp);
+		publish_longitudinal_setpoint(fw_longitudinal_control_sp);
 
 		_ctrl_configuration_handler.setPitchMin(pitch_min);
 		_ctrl_configuration_handler.setPitchMax(pitch_max);
@@ -1227,7 +1227,7 @@ FixedWingModeManager::control_auto_takeoff(const hrt_abstime &now, const float c
 				.throttle_direct = NAN
 			};
 
-			_longitudinal_ctrl_sp_pub.publish(fw_longitudinal_control_sp);
+			publish_longitudinal_setpoint(fw_longitudinal_control_sp);
 
 			_ctrl_configuration_handler.setPitchMin(radians(_takeoff_pitch_min.get()));
 			_ctrl_configuration_handler.setThrottleMax(max_takeoff_throttle);
@@ -1247,7 +1247,7 @@ FixedWingModeManager::control_auto_takeoff(const hrt_abstime &now, const float c
 			long_control_sp.timestamp = now;
 			long_control_sp.pitch_direct = radians(_takeoff_pitch_min.get());
 			long_control_sp.throttle_direct = _param_fw_thr_idle.get();
-			_longitudinal_ctrl_sp_pub.publish(long_control_sp);
+			publish_longitudinal_setpoint(long_control_sp);
 		}
 
 		launch_detection_status_s launch_detection_status;
@@ -1309,7 +1309,7 @@ FixedWingModeManager::control_auto_takeoff_no_nav(const hrt_abstime &now, const 
 			.throttle_direct = _runway_takeoff.getThrottle(_param_fw_thr_idle.get())
 		};
 
-		_longitudinal_ctrl_sp_pub.publish(fw_longitudinal_control_sp);
+		publish_longitudinal_setpoint(fw_longitudinal_control_sp);
 
 		_ctrl_configuration_handler.setPitchMin(pitch_min);
 		_ctrl_configuration_handler.setPitchMax(pitch_max);
@@ -1368,7 +1368,7 @@ FixedWingModeManager::control_auto_takeoff_no_nav(const hrt_abstime &now, const 
 			.throttle_direct = NAN
 		};
 
-		_longitudinal_ctrl_sp_pub.publish(fw_longitudinal_control_sp);
+		publish_longitudinal_setpoint(fw_longitudinal_control_sp);
 
 		_ctrl_configuration_handler.setPitchMin(radians(_takeoff_pitch_min.get()));
 		_ctrl_configuration_handler.setThrottleMax(max_takeoff_throttle);
@@ -1519,7 +1519,7 @@ FixedWingModeManager::control_auto_landing_straight(const hrt_abstime &now, cons
 			.throttle_direct = NAN
 		};
 
-		_longitudinal_ctrl_sp_pub.publish(fw_longitudinal_control_sp);
+		publish_longitudinal_setpoint(fw_longitudinal_control_sp);
 
 		_ctrl_configuration_handler.setPitchMin(pitch_min_rad);
 		_ctrl_configuration_handler.setPitchMax(pitch_max_rad);
@@ -1563,7 +1563,7 @@ FixedWingModeManager::control_auto_landing_straight(const hrt_abstime &now, cons
 			.throttle_direct = NAN
 		};
 
-		_longitudinal_ctrl_sp_pub.publish(fw_longitudinal_control_sp);
+		publish_longitudinal_setpoint(fw_longitudinal_control_sp);
 
 		_ctrl_configuration_handler.setThrottleMin(_param_fw_thr_idle.get());
 		_ctrl_configuration_handler.setThrottleMax(_landed ? _param_fw_thr_idle.get() : NAN);
@@ -1690,7 +1690,7 @@ FixedWingModeManager::control_auto_landing_circular(const hrt_abstime &now, cons
 			.throttle_direct = NAN
 		};
 
-		_longitudinal_ctrl_sp_pub.publish(fw_longitudinal_control_sp);
+		publish_longitudinal_setpoint(fw_longitudinal_control_sp);
 
 		_ctrl_configuration_handler.setPitchMin(pitch_min_rad);
 		_ctrl_configuration_handler.setPitchMax(pitch_max_rad);
@@ -1728,7 +1728,7 @@ FixedWingModeManager::control_auto_landing_circular(const hrt_abstime &now, cons
 			.throttle_direct = NAN
 		};
 
-		_longitudinal_ctrl_sp_pub.publish(fw_longitudinal_control_sp);
+		publish_longitudinal_setpoint(fw_longitudinal_control_sp);
 
 		_ctrl_configuration_handler.setThrottleMin(_param_fw_thr_idle.get());
 		_ctrl_configuration_handler.setThrottleMax(_landed ? _param_fw_thr_idle.get() : NAN);
@@ -1755,6 +1755,29 @@ FixedWingModeManager::control_auto_landing_circular(const hrt_abstime &now, cons
 
 	landing_status_publish();
 	publishOrbitStatus(pos_sp_curr);
+}
+
+/* [2026-10 custom] Every longitudinal setpoint goes through here. While the FW-entry bridge (speed-paced pitch ramp ->
+ * blend into TECS) is active, its pitch / thrust replace the mode's own TECS request - in auto modes too.
+ * log_4_2026-10-5-20-36-48 (QGC Hold -> transition): the bridge ran (message "settled") but its output was only wired into
+ * the manual modes, so in AUTO_LOITER TECS started from pitch 0, the nose dropped 13 -> -5 deg at the hand-off, the sink
+ * rate reached 7.7 m/s and the vehicle lost 20 m (31 -> 11 m, 1 m above the VT_FW_MIN_ALT quad-chute limit). The same
+ * manual flight (log_1_2026-10-5-20-38-39) lost 5 m. */
+void
+FixedWingModeManager::publish_longitudinal_setpoint(fixed_wing_longitudinal_setpoint_s sp)
+{
+	const bool landing = (_control_mode_current == FW_POSCTRL_MODE_AUTO_LANDING_STRAIGHT)
+			     || (_control_mode_current == FW_POSCTRL_MODE_AUTO_LANDING_CIRCULAR);
+
+	if (_fw_entry_phase != FwEntryPhase::NONE && PX4_ISFINITE(_fw_entry_pitch_out) && !_recovery_hold_active && !landing) {
+		sp.pitch_direct = _fw_entry_pitch_out;
+
+		if (PX4_ISFINITE(_fw_entry_thr_out)) {
+			sp.throttle_direct = _fw_entry_thr_out;
+		}
+	}
+
+	_longitudinal_ctrl_sp_pub.publish(sp);
 }
 
 /* [2026-10 custom] one-sided sink-rate feedback: add pitch while sinking, wind back only when climbing hard. */
@@ -1959,9 +1982,15 @@ FixedWingModeManager::control_recovery_pitch_up(const hrt_abstime now, const flo
 		_recovery_pitch_up_prev = true;
 	}
 
-	_recovery_pitch_cmd += _recovery.pitch_rate * dt;
-	_recovery_pitch_cmd = math::min(_recovery_pitch_cmd, _recovery.pitch_target);
-	_recovery_pitch_cmd = math::min(_recovery_pitch_cmd, _pitch + MAX_LEAD);
+	if (_recovery.phase == tailsitter_recovery_s::PHASE_PITCH_UP) {
+		_recovery_pitch_cmd += _recovery.pitch_rate * dt;
+		_recovery_pitch_cmd = math::min(_recovery_pitch_cmd, _recovery.pitch_target);
+		_recovery_pitch_cmd = math::min(_recovery_pitch_cmd, _pitch + MAX_LEAD);
+
+	} else {
+		// back-transition phase, vehicle still reported as fixed-wing: freeze the attitude, do not ramp further
+		_recovery_pitch_cmd = math::min(_recovery_pitch_cmd, _pitch + MAX_LEAD);
+	}
 
 	fixed_wing_lateral_setpoint_s fw_lateral_ctrl_sp{empty_lateral_control_setpoint};
 	fw_lateral_ctrl_sp.timestamp = now;
@@ -1976,7 +2005,7 @@ FixedWingModeManager::control_recovery_pitch_up(const hrt_abstime now, const flo
 		.pitch_direct = _recovery_pitch_cmd,
 		.throttle_direct = _recovery.thrust_fw
 	};
-	_longitudinal_ctrl_sp_pub.publish(fw_longitudinal_control_sp);
+	publish_longitudinal_setpoint(fw_longitudinal_control_sp);
 }
 
 void
@@ -2009,7 +2038,7 @@ FixedWingModeManager::control_manual_altitude(const float control_interval, cons
 		.throttle_direct = PX4_ISFINITE(_fw_entry_thr_out) ? _fw_entry_thr_out : _manual_thr_out
 	};
 
-	_longitudinal_ctrl_sp_pub.publish(fw_longitudinal_control_sp);
+	publish_longitudinal_setpoint(fw_longitudinal_control_sp);
 
 	_ctrl_configuration_handler.setPitchMin(min_pitch);
 	_ctrl_configuration_handler.setThrottleMax(throttle_max);
@@ -2129,7 +2158,7 @@ FixedWingModeManager::control_manual_position(const hrt_abstime now, const float
 		.throttle_direct = PX4_ISFINITE(_fw_entry_thr_out) ? _fw_entry_thr_out : _manual_thr_out
 	};
 
-	_longitudinal_ctrl_sp_pub.publish(fw_longitudinal_control_sp);
+	publish_longitudinal_setpoint(fw_longitudinal_control_sp);
 
 	_ctrl_configuration_handler.setPitchMin(min_pitch);
 	_ctrl_configuration_handler.setThrottleMax(throttle_max);
@@ -2427,17 +2456,24 @@ FixedWingModeManager::Run()
 		_new_landing_gear_position = landing_gear_s::GEAR_KEEP; // is overwritten in Takeoff and Land
 
 		_recovery_sub.update(&_recovery);
-		const bool recovery_pitch_up = (_recovery.phase == tailsitter_recovery_s::PHASE_PITCH_UP)
-					       && (hrt_elapsed_time(&_recovery.timestamp) < 1_s)
-					       && (_control_mode_current != FW_POSCTRL_MODE_OTHER)
-					       && (_vehicle_status.vehicle_type == vehicle_status_s::VEHICLE_TYPE_FIXED_WING)
-					       && !_vehicle_status.in_transition_mode;
+		/* [2026-10 custom] Attitude first: the recovery owns the pitch from the pitch-up phase until the back transition has
+		 * really taken over (vehicle_type leaves fixed-wing / in_transition_mode). The back-transition phase starts a few
+		 * cycles before vehicle_status follows; without this hold TECS (height-rate setpoint -5 m/s while the vehicle is
+		 * climbing) commanded -30 deg in that gap (log_4_2026-10-5-20-36-48 at 86.0 s). Altitude gain is accepted. */
+		const bool recovery_hold = ((_recovery.phase == tailsitter_recovery_s::PHASE_PITCH_UP)
+					    || (_recovery.phase == tailsitter_recovery_s::PHASE_BACK_TRANSITION))
+					   && (hrt_elapsed_time(&_recovery.timestamp) < 1_s)
+					   && (_control_mode_current != FW_POSCTRL_MODE_OTHER)
+					   && (_vehicle_status.vehicle_type == vehicle_status_s::VEHICLE_TYPE_FIXED_WING)
+					   && !_vehicle_status.in_transition_mode;
 
-		if (!recovery_pitch_up) {
+		_recovery_hold_active = recovery_hold;
+
+		if (!recovery_hold) {
 			_recovery_pitch_up_prev = false;
 		}
 
-		if (recovery_pitch_up) {
+		if (recovery_hold) {
 			control_recovery_pitch_up(now, control_interval);
 
 		} else switch (_control_mode_current) {

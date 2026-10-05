@@ -316,6 +316,7 @@ private:
 	uORB::Subscription _recovery_sub{ORB_ID(tailsitter_recovery)};
 	tailsitter_recovery_s _recovery{};
 	bool _recovery_pitch_up_prev{false};
+	bool _recovery_hold_active{false};  ///< recovery pitch-up / hand-over hold is publishing the longitudinal setpoint
 	float _recovery_pitch_cmd{0.f};     ///< [rad] FW-frame pitch command
 
 	/* [2026-10 custom] incremental manual throttle (speed control by thrust), see manual_throttle_update().
@@ -692,6 +693,9 @@ private:
 	 * @param ground_speed Local 2D ground speed of vehicle [m/s]
 	 */
 	void fw_entry_bridge_update(const hrt_abstime now);
+	/* [2026-10 custom] single exit for every longitudinal setpoint: while the FW-entry bridge is active its pitch/thrust
+	 * override is applied to ALL modes (manual and auto), see publish_longitudinal_setpoint(). */
+	void publish_longitudinal_setpoint(fixed_wing_longitudinal_setpoint_s sp);
 	void fw_entry_update_sink_corr(const float vz, const float dt);
 	void control_recovery_pitch_up(const hrt_abstime now, const float dt);
 	void manual_throttle_update(const hrt_abstime now);

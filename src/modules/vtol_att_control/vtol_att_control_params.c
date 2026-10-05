@@ -517,7 +517,9 @@ PARAM_DEFINE_INT32(VT_REC_EN, 0);
 /**
  * Recovery: fixed-wing pitch at which the back transition starts
  *
- * Nose angle above the horizon.
+ * Nose angle above the horizon. In Altitude/Position (manual) modes the pitch setpoint is clamped to FW_P_LIM_MAX (30 deg
+ * default), so a larger value is only reachable in auto modes or with a larger FW_P_LIM_MAX; the pitch-up counts as reached
+ * 3 deg below this value.
  *
  * @unit deg
  * @min 10.0
@@ -526,7 +528,7 @@ PARAM_DEFINE_INT32(VT_REC_EN, 0);
  * @increment 1.0
  * @group VTOL Attitude Control
  */
-PARAM_DEFINE_FLOAT(VT_REC_PITCH, 35.0f);
+PARAM_DEFINE_FLOAT(VT_REC_PITCH, 30.0f);
 
 /**
  * Recovery: thrust during the fixed-wing pitch-up
@@ -604,3 +606,18 @@ PARAM_DEFINE_FLOAT(VT_REC_VXY, 5.0f);
  * @group VTOL Attitude Control
  */
 PARAM_DEFINE_FLOAT(VT_REC_TMO, 20.0f);
+
+/**
+ * Recovery: stick deflection that cancels the automatic recovery
+ *
+ * The automatic recovery is always cancelled by a flight-mode change (RC mode switch, GCS command, failsafe).
+ * If this value is above 0 it is also cancelled when roll, pitch, yaw or throttle (relative to its position when the
+ * recovery started) deflects more than this. 0 = sticks never cancel the recovery.
+ *
+ * @min 0.0
+ * @max 1.0
+ * @decimal 2
+ * @increment 0.05
+ * @group VTOL Attitude Control
+ */
+PARAM_DEFINE_FLOAT(VT_REC_STICK, 0.0f);

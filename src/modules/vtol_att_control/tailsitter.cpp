@@ -96,22 +96,31 @@ uint32_t Tailsitter::recoveryModeSignature() const
 	       | (_v_control_mode->flag_control_attitude_enabled ? 32u : 0u);
 }
 
-/* Pilot takeover: any stick beyond 20 % (throttle: away from the position it had when the recovery started) or a change of the flight-mode flags cancels the
- * automatic recovery. log_1_2026-10-5-20-03-05: the recovery stayed in POS_HOLD until disarm and overrode the setpoints, no
- * stick and no flight-mode switch reached the vehicle for 60 s. */
+/* Pilot takeover = the pilot (RC mode switch), the GCS or a failsafe changed the flight mode since the recovery started:
+ * vehicle_status.nav_state or the control-mode flags differ. Sticks cancel the recovery only if VT_REC_STICK > 0 (default 0 =
+ * off, mode switch only). log_1_2026-10-5-20-03-05: without any release rule the recovery stayed in POS_HOLD until disarm and
+ * overrode the setpoints, no stick and no flight-mode switch reached the vehicle for 60 s. */
 bool Tailsitter::recoveryPilotTakeover()
 {
-	static constexpr float STICK_TAKEOVER = 0.20f;
-
 	if (recoveryModeSignature() != _rec_mode_sig) {
 		return true;
 	}
 
-	manual_control_setpoint_s manual{};
+	vehicle_status_s status{};
 
-	if (_rec_manual_sub.copy(&manual) && manual.valid && (hrt_elapsed_time(&manual.timestamp) < 500_ms)) {
-		return (fabsf(manual.roll) > STICK_TAKEOVER) || (fabsf(manual.pitch) > STICK_TAKEOVER)
-		       || (fabsf(manual.yaw) > STICK_TAKEOVER) || (fabsf(manual.throttle - _rec_thr_ref) > STICK_TAKEOVER);
+	if (_rec_status_sub.copy(&status) && (status.nav_state != _rec_nav_state)) {
+		return true;
+	}
+
+	const float stick_limit = _param_vt_rec_stick.get();
+
+	if (stick_limit > FLT_EPSILON) {
+		manual_control_setpoint_s manual{};
+
+		if (_rec_manual_sub.copy(&manual) && manual.valid && (hrt_elapsed_time(&manual.timestamp) < 500_ms)) {
+			return (fabsf(manual.roll) > stick_limit) || (fabsf(manual.pitch) > stick_limit)
+			       || (fabsf(manual.yaw) > stick_limit) || (fabsf(manual.throttle - _rec_thr_ref) > stick_limit);
+		}
 	}
 
 	return false;
@@ -131,6 +140,7 @@ void Tailsitter::updateRecovery()
 
 	if (!enabled || !armed || fw_requested || quad_chute) {
 		_rec_cancelled = false; // a new command / disarm re-arms the automatic recovery
+		_back_trans_from_recovery = false;
 		setRecoveryPhase(tailsitter_recovery_s::PHASE_IDLE, now);
 		publishRecovery(now, false);
 		return;
@@ -157,6 +167,8 @@ void Tailsitter::updateRecovery()
 	case tailsitter_recovery_s::PHASE_IDLE:
 		if (_vtol_mode == vtol_mode::FW_MODE) { // transition-to-MC command in fixed-wing flight
 			_rec_mode_sig = recoveryModeSignature();
+			vehicle_status_s status_start{};
+			_rec_nav_state = _rec_status_sub.copy(&status_start) ? status_start.nav_state : 0;
 			manual_control_setpoint_s manual_start{};
 			_rec_thr_ref = (_rec_manual_sub.copy(&manual_start) && manual_start.valid) ? manual_start.throttle : 0.f;
 			setRecoveryPhase(tailsitter_recovery_s::PHASE_PITCH_UP, now);
@@ -173,6 +185,7 @@ void Tailsitter::updateRecovery()
 
 			} else if (reached || timeout) {
 				resetTransitionStates();
+				_back_trans_from_recovery = true; // start attitude = actual nose pitch, see update_transition_state()
 				_vtol_mode = vtol_mode::TRANSITION_BACK;
 				setRecoveryPhase(tailsitter_recovery_s::PHASE_BACK_TRANSITION, now);
 			}
@@ -401,25 +414,18 @@ void Tailsitter::update_transition_state()
 			// as heading setpoint we choose the heading given by the direction the vehicle points
 			const float yaw_sp = atan2f(z(1), z(0));
 
-			// the intial attitude setpoint for a backtransition is a combination of the current fw pitch setpoint,
-			// the yaw setpoint and zero roll since we want wings level transition.
-			// If for some reason the fw attitude setpoint is not recent then don't use it and assume 0 pitch
-			if (_back_trans_from_front) {
-				/* [2026-09 custom] coming from a front transition: the FW controller
-				 * was never in charge, so its pitch setpoint says nothing about the
-				 * vehicle. Start from the actual nose pitch (above horizon) so the
-				 * setpoint is continuous. z is the nose direction (NED). */
-				const float pitch_body = asinf(math::constrain(-z(2), -1.f, 1.f));
-				_q_trans_start = Eulerf(0.f, pitch_body, yaw_sp);
-				_back_trans_from_front = false;
-
-			} else if (_fw_virtual_att_sp->timestamp > (now - 1_s)) {
-				const float pitch_body = Eulerf(Quatf(_fw_virtual_att_sp->q_d)).theta();
-				_q_trans_start = Eulerf(0.f, pitch_body, yaw_sp);
-
-			} else {
-				_q_trans_start = Eulerf(0.f, 0.f, yaw_sp);
-			}
+			/* [2026-10 custom] Attitude first. Stock: the start attitude is the current FW pitch SETPOINT. That setpoint is
+			 * whatever the FW controller (TECS) asks for at that instant - which is not the attitude the vehicle is flying.
+			 * log_4_2026-10-5-20-36-48 / log_1_2026-10-5-20-38-39: nose +32 deg, TECS height-rate setpoint -5 m/s (the vehicle
+			 * was climbing) -> pitch setpoint -30 deg (FW_P_LIM_MIN) -> 62 deg step in 0.25 s, nose-down dive to 125 m/s,
+			 * quad-chute at the minimum altitude. A back transition now always starts from the ACTUAL nose pitch (above
+			 * horizon, wings level, heading = nose heading), so the setpoint is continuous whatever the FW controller was
+			 * doing; altitude is allowed to change while the attitude is brought to the hover attitude. z is the nose
+			 * direction (NED). */
+			const float pitch_body = asinf(math::constrain(-z(2), -1.f, 1.f));
+			_q_trans_start = Eulerf(0.f, pitch_body, yaw_sp);
+			_back_trans_from_front = false;
+			_back_trans_from_recovery = false;
 
 			// attitude during transitions are controlled by mc attitude control so rotate the desired attitude to the
 			// multirotor frame

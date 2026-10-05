@@ -92,7 +92,25 @@ void ActuatorEffectivenessTailsitterVTOL::updateSetpoint(const matrix::Vector<fl
 		int matrix_index, ActuatorVector &actuator_sp, const ActuatorVector &actuator_min, const ActuatorVector &actuator_max)
 {
 	if (matrix_index == 0) {
-		stopMaskedMotorsWithZeroThrust(_forwards_motors_mask, actuator_sp);
+		/* [2026-10 custom] In forward flight the stock code stops (NAN output) every masked motor whose setpoint falls below 2 %.
+		 * With attitude control by differential thrust one motor of the low pair regularly dips below 2 % during roll-in/out;
+		 * it was then switched off (ESC disarmed, "ESC failure detected") although the other motors still produce thrust.
+		 * Stop the masked motors only when ALL of them are at zero thrust (real glide); otherwise keep them running at their
+		 * (clipped) setpoint. */
+		float max_masked_sp = 0.f;
+
+		for (int idx = 0; idx < NUM_ACTUATORS; idx++) {
+			if (_forwards_motors_mask & (1u << idx)) {
+				max_masked_sp = math::max(max_masked_sp, fabsf(actuator_sp(idx)));
+			}
+		}
+
+		if (max_masked_sp < 0.02f) {
+			stopMaskedMotorsWithZeroThrust(_forwards_motors_mask, actuator_sp);
+
+		} else {
+			_stopped_motors_mask &= ~_forwards_motors_mask;
+		}
 	}
 }
 
